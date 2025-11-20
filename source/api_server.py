@@ -409,9 +409,11 @@ def validate_scan_token(token):
     cache_key = f'token_{hashlib.md5(token.encode()).hexdigest()}'
     cached = get_cached(cache_key)
     if cached:
+        print(f"🔍 Token encontrado en caché: {cached.get('error', 'válido')}")
         return cached['token_id'], cached.get('error')
     
     try:
+        print(f"🔍 Buscando token en BD: {token[:20]}...")
         with get_db_cursor() as cursor:
             cursor.execute('''
                 SELECT id, expires_at, used_count, max_uses, is_active
@@ -422,6 +424,24 @@ def validate_scan_token(token):
             result = cursor.fetchone()
             
             if not result:
+                # Verificar si el token existe con diferentes formatos (por si hay espacios)
+                cursor.execute('''
+                    SELECT COUNT(*) FROM scan_tokens
+                ''')
+                total_tokens = cursor.fetchone()[0]
+                print(f"⚠️ Token no encontrado. Total de tokens en BD: {total_tokens}")
+                print(f"⚠️ Token buscado (primeros 30 chars): {token[:30]}")
+                
+                # Listar algunos tokens para debug (solo primeros caracteres)
+                cursor.execute('''
+                    SELECT token FROM scan_tokens ORDER BY created_at DESC LIMIT 5
+                ''')
+                sample_tokens = cursor.fetchall()
+                if sample_tokens:
+                    print(f"📋 Tokens recientes en BD:")
+                    for t in sample_tokens:
+                        print(f"   - {t[0][:30]}...")
+                
                 result_data = {'token_id': None, 'error': 'Token no encontrado'}
                 set_cached(cache_key, result_data)
                 return None, "Token no encontrado"
@@ -447,8 +467,12 @@ def validate_scan_token(token):
             
             result_data = {'token_id': token_id, 'error': None}
             set_cached(cache_key, result_data)
+            print(f"✅ Token válido encontrado: ID={token_id}, activo={is_active}, usado={used_count}/{max_uses if max_uses > 0 else '∞'}")
             return token_id, None
     except Exception as e:
+        print(f"❌ Error validando token: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return None, f"Error validando token: {str(e)}"
 
 # ============================================================
@@ -637,6 +661,8 @@ def create_scan_token():
             # Limpiar caché relacionado
             clear_cache('tokens')
             clear_cache('token_')
+            
+            print(f"✅ Token creado exitosamente: ID={token_id}, Token={token[:30]}..., Creado por={created_by}")
             
             return jsonify({
                 'success': True,
