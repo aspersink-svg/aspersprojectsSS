@@ -254,8 +254,30 @@ body {
 }
 
 @keyframes float {
-    0%, 100% { transform: translateY(0px); }
-    50% { transform: translateY(-20px); }
+    0%, 100% { 
+        transform: translateX(-50%) translateY(0px);
+    }
+    50% { 
+        transform: translateX(-50%) translateY(-20px);
+    }
+}
+
+@keyframes float-center {
+    0%, 100% { 
+        transform: translate(-50%, -50%) translateY(0px);
+    }
+    50% { 
+        transform: translate(-50%, -50%) translateY(-20px);
+    }
+}
+
+.card-1,
+.card-3 {
+    animation-name: float;
+}
+
+.card-2 {
+    animation-name: float-center;
 }
 
 .card-icon {

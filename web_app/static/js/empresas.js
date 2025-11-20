@@ -79,20 +79,31 @@ async function loadCompanyTokens() {
                 const expiresDate = token.expires_at ? new Date(token.expires_at) : null;
                 const isExpired = expiresDate && expiresDate < new Date();
                 const tokenSnippet = token.token.substring(0, 20) + '...';
-                const tokenType = token.is_admin_token ? 'Admin' : 'Usuario';
+                const tokenType = token.is_admin_token ? 'ADMIN' : 'USUARIO';
+                
+                // Determinar el estado: si está expirado, mostrar EXPIRADO; si está usado, mostrar USADO; si no, mostrar ACTIVO
+                let statusBadge = '';
+                let statusText = '';
+                if (isExpired) {
+                    statusBadge = 'badge-danger';
+                    statusText = 'EXPIRADO';
+                } else if (token.is_used) {
+                    statusBadge = 'badge-warning';
+                    statusText = 'USADO';
+                } else {
+                    statusBadge = 'badge-success';
+                    statusText = 'ACTIVO';
+                }
                 
                 return `
                     <tr>
                         <td><code style="font-size: 12px;">${tokenSnippet}</code></td>
                         <td><span class="badge badge-${token.is_admin_token ? 'info' : 'success'}">${tokenType}</span></td>
                         <td>${createdDate.toLocaleString('es-ES')}</td>
+                        <td>${expiresDate ? expiresDate.toLocaleString('es-ES') : 'Sin expiración'}</td>
                         <td>
-                            ${expiresDate ? expiresDate.toLocaleString('es-ES') : 'Sin expiración'}
-                            ${isExpired ? '<span class="badge badge-danger">Expirado</span>' : ''}
-                        </td>
-                        <td>
-                            <span class="badge badge-${token.is_used ? 'danger' : 'success'}">
-                                ${token.is_used ? 'Usado' : 'Activo'}
+                            <span class="badge ${statusBadge}">
+                                ${statusText}
                             </span>
                         </td>
                     </tr>

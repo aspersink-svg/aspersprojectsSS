@@ -482,69 +482,100 @@ def health_check():
 
 @app.route('/api/statistics', methods=['GET'])
 def get_statistics():
-    """Obtiene estadísticas del sistema"""
+    """Obtiene estadísticas del sistema - OPTIMIZADO CON CACHÉ Y QUERY ÚNICA"""
+    # Verificar caché primero (30 segundos TTL)
+    cache_key = 'statistics'
+    cached = get_cached(cache_key)
+    if cached:
+        return jsonify(cached), 200
+    
     try:
-        # Obtener estadísticas de la base de datos
+        # Obtener todas las estadísticas en una sola transacción
         with get_db_cursor() as cursor:
-            # Total de escaneos
-            try:
-                cursor.execute('SELECT COUNT(*) FROM scans')
-                total_scans = cursor.fetchone()[0]
-            except sqlite3.OperationalError:
-                total_scans = 0
+            # Inicializar valores por defecto
+            stats = {
+                'total_scans': 0,
+                'active_scans': 0,
+                'unique_machines': 0,
+                'severe_detections': 0,
+                'total_results': 0,
+                'active_tokens': 0,
+                'total_bans': 0
+            }
             
-            # Escaneos activos
+            # Consulta optimizada: obtener múltiples conteos en una sola query usando subconsultas
+            # Esto es MUCHO más rápido que hacer 7 consultas separadas
             try:
-                cursor.execute('SELECT COUNT(*) FROM scans WHERE status = "running"')
-                active_scans = cursor.fetchone()[0]
-            except sqlite3.OperationalError:
-                active_scans = 0
-            
-            # Total de máquinas únicas
-            try:
-                cursor.execute('SELECT COUNT(DISTINCT machine_id) FROM scans WHERE machine_id IS NOT NULL AND machine_id != ""')
-                unique_machines = cursor.fetchone()[0]
-            except sqlite3.OperationalError:
-                unique_machines = 0
-            
-            # Total de detecciones severas (CRITICAL)
-            try:
-                cursor.execute('SELECT COUNT(*) FROM scan_results WHERE alert_level = "CRITICAL"')
-                severe_detections = cursor.fetchone()[0]
-            except sqlite3.OperationalError:
-                severe_detections = 0
-            
-            # Total de resultados
-            try:
-                cursor.execute('SELECT COUNT(*) FROM scan_results')
-                total_results = cursor.fetchone()[0]
-            except sqlite3.OperationalError:
-                total_results = 0
-            
-            # Total de tokens activos
-            try:
-                cursor.execute('SELECT COUNT(*) FROM scan_tokens WHERE is_active = 1')
-                active_tokens = cursor.fetchone()[0]
-            except sqlite3.OperationalError:
-                active_tokens = 0
-            
-            # Total de bans
-            try:
-                cursor.execute('SELECT COUNT(*) FROM ban_history')
-                total_bans = cursor.fetchone()[0]
-            except sqlite3.OperationalError:
-                total_bans = 0
+                cursor.execute('''
+                    SELECT 
+                        (SELECT COUNT(*) FROM scans) as total_scans,
+                        (SELECT COUNT(*) FROM scans WHERE status = "running") as active_scans,
+                        (SELECT COUNT(DISTINCT machine_id) FROM scans WHERE machine_id IS NOT NULL AND machine_id != "") as unique_machines,
+                        (SELECT COUNT(*) FROM scan_results WHERE alert_level = "CRITICAL") as severe_detections,
+                        (SELECT COUNT(*) FROM scan_results) as total_results,
+                        (SELECT COUNT(*) FROM scan_tokens WHERE is_active = 1) as active_tokens,
+                        (SELECT COUNT(*) FROM ban_history) as total_bans
+                ''')
+                row = cursor.fetchone()
+                if row:
+                    stats['total_scans'] = row[0] or 0
+                    stats['active_scans'] = row[1] or 0
+                    stats['unique_machines'] = row[2] or 0
+                    stats['severe_detections'] = row[3] or 0
+                    stats['total_results'] = row[4] or 0
+                    stats['active_tokens'] = row[5] or 0
+                    stats['total_bans'] = row[6] or 0
+            except sqlite3.OperationalError as e:
+                # Si alguna tabla no existe, intentar consultas individuales como fallback
+                try:
+                    cursor.execute('SELECT COUNT(*) FROM scans')
+                    stats['total_scans'] = cursor.fetchone()[0] or 0
+                except sqlite3.OperationalError:
+                    pass
+                
+                try:
+                    cursor.execute('SELECT COUNT(*) FROM scans WHERE status = "running"')
+                    stats['active_scans'] = cursor.fetchone()[0] or 0
+                except sqlite3.OperationalError:
+                    pass
+                
+                try:
+                    cursor.execute('SELECT COUNT(DISTINCT machine_id) FROM scans WHERE machine_id IS NOT NULL AND machine_id != ""')
+                    stats['unique_machines'] = cursor.fetchone()[0] or 0
+                except sqlite3.OperationalError:
+                    pass
+                
+                try:
+                    cursor.execute('SELECT COUNT(*) FROM scan_results WHERE alert_level = "CRITICAL"')
+                    stats['severe_detections'] = cursor.fetchone()[0] or 0
+                except sqlite3.OperationalError:
+                    pass
+                
+                try:
+                    cursor.execute('SELECT COUNT(*) FROM scan_results')
+                    stats['total_results'] = cursor.fetchone()[0] or 0
+                except sqlite3.OperationalError:
+                    pass
+                
+                try:
+                    cursor.execute('SELECT COUNT(*) FROM scan_tokens WHERE is_active = 1')
+                    stats['active_tokens'] = cursor.fetchone()[0] or 0
+                except sqlite3.OperationalError:
+                    pass
+                
+                try:
+                    cursor.execute('SELECT COUNT(*) FROM ban_history')
+                    stats['total_bans'] = cursor.fetchone()[0] or 0
+                except sqlite3.OperationalError:
+                    pass
         
-        return jsonify({
-            'total_scans': total_scans,
-            'active_scans': active_scans,
-            'unique_machines': unique_machines,
-            'severe_detections': severe_detections,
-            'total_results': total_results,
-            'active_tokens': active_tokens,
-            'total_bans': total_bans,
-            'timestamp': datetime.datetime.now().isoformat()
-        }), 200
+        # Agregar timestamp
+        stats['timestamp'] = datetime.datetime.now().isoformat()
+        
+        # Guardar en caché
+        set_cached(cache_key, stats)
+        
+        return jsonify(stats), 200
     except Exception as e:
         return jsonify({
             'error': str(e),
