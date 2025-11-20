@@ -1173,8 +1173,8 @@ def create_token():
                     
                     token_id = cursor.lastrowid
                 
-            return jsonify({
-                'success': True,
+                return jsonify({
+                    'success': True,
                     'token': token,
                     'token_id': token_id,
                     'expires_at': expires_at,
