@@ -855,8 +855,14 @@ def login_required(f):
     """Decorador para requerir login"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        # Verificar si es una petición AJAX/JSON (múltiples formas de detectarlo)
+        is_ajax = (request.is_json or 
+                  request.headers.get('Content-Type', '').startswith('application/json') or
+                  request.headers.get('Accept', '').startswith('application/json') or
+                  request.headers.get('X-Requested-With') == 'XMLHttpRequest')
+        
         if 'user_id' not in session:
-            if request.is_json:
+            if is_ajax:
                 return jsonify({'error': 'No autenticado'}), 401
             return redirect(url_for('login'))
         return f(*args, **kwargs)
@@ -866,14 +872,20 @@ def admin_required(f):
     """Decorador para requerir rol de administrador (super admin)"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        # Verificar si es una petición AJAX/JSON (múltiples formas de detectarlo)
+        is_ajax = (request.is_json or 
+                  request.headers.get('Content-Type', '').startswith('application/json') or
+                  request.headers.get('Accept', '').startswith('application/json') or
+                  request.headers.get('X-Requested-With') == 'XMLHttpRequest')
+        
         if 'user_id' not in session:
-            if request.is_json:
+            if is_ajax:
                 return jsonify({'error': 'No autenticado'}), 401
             return redirect(url_for('login'))
         
         user = get_user_by_id(session['user_id'])
         if not user or not is_admin(user):
-            if request.is_json:
+            if is_ajax:
                 return jsonify({'error': 'Acceso denegado. Se requiere rol de administrador.'}), 403
             return redirect(url_for('panel'))
         

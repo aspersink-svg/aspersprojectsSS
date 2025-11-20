@@ -186,25 +186,38 @@ async function loadRecentScans() {
 
 async function loadTokens() {
     try {
-        const response = await fetch('/api/tokens');
+        const response = await fetch('/api/tokens?include_used=false');
+        if (!response.ok) {
+            throw new Error(`Error ${response.status}: ${response.statusText}`);
+        }
         const data = await response.json();
         
         const tbody = document.getElementById('tokens-table-body');
-        if (data.tokens && data.tokens.length > 0) {
-            tbody.innerHTML = data.tokens.map(token => `
+        // El endpoint devuelve {success: true, tokens: [...]}
+        const tokens = data.success ? data.tokens : (data.tokens || []);
+        if (tokens && tokens.length > 0) {
+            tbody.innerHTML = tokens.map(token => {
+                const tokenStr = token.token || '';
+                const isUsed = token.is_used || false;
+                const expiresAt = token.expires_at ? new Date(token.expires_at) : null;
+                const isExpired = expiresAt && expiresAt < new Date();
+                const isActive = !isUsed && !isExpired;
+                
+                return `
                 <tr>
-                    <td><code>${token.token.substring(0, 20)}...</code></td>
-                    <td>${formatDate(token.created_at)}</td>
-                    <td>${token.created_by || 'N/A'}</td>
-                    <td>${token.used_count} / ${token.max_uses === -1 ? '∞' : token.max_uses}</td>
-                    <td><span class="badge ${token.is_active ? 'badge-success' : 'badge-danger'}">${token.is_active ? 'Activo' : 'Inactivo'}</span></td>
+                    <td><code>${tokenStr.substring(0, 20)}...</code></td>
+                    <td>${token.created_at ? formatDate(token.created_at) : 'N/A'}</td>
+                    <td>${token.description || 'Sin descripción'}</td>
+                    <td>${expiresAt ? formatDate(expiresAt) : 'N/A'}</td>
+                    <td><span class="badge ${isActive ? 'badge-success' : 'badge-danger'}">${isActive ? 'Activo' : (isUsed ? 'Usado' : 'Expirado')}</span></td>
                     <td>
-                        <button class="btn btn-sm btn-danger" onclick="deleteToken(${token.id})" title="Eliminar permanentemente este token">
+                        <button class="btn btn-sm btn-danger" onclick="deleteToken(${token.id || token.token_id})" title="Eliminar permanentemente este token">
                             🗑️ Eliminar
                         </button>
                     </td>
                 </tr>
-            `).join('');
+            `;
+            }).join('');
         } else {
             tbody.innerHTML = '<tr><td colspan="6" class="loading-cell">No hay tokens</td></tr>';
         }
@@ -351,19 +364,52 @@ async function createToken() {
     }
 
     try {
+        // Convertir días a horas para el endpoint
+        const expires_hours = expires * 24;
+        
         const response = await fetch('/api/tokens', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+                'Content-Type': 'application/json',
+                'Accept': 'application/json' // Asegurar que esperamos JSON
+            },
+            credentials: 'same-origin', // Incluir cookies de sesión
             body: JSON.stringify({
                 description,
-                expires_days: expires,
-                max_uses: maxUses,
-                created_by: 'staff'
+                expires_hours: expires_hours,
+                company_id: null, // Token general (no de empresa)
+                is_admin_token: false // Token normal, no de admin
             })
         });
 
+        // Verificar el Content-Type de la respuesta
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            // Si no es JSON, leer como texto para ver qué devolvió
+            const text = await response.text();
+            console.error('Respuesta no es JSON:', text.substring(0, 200));
+            
+            if (response.status === 401 || response.status === 403) {
+                throw new Error('No tienes permisos para crear tokens. Verifica que seas administrador y que tu sesión no haya expirado.');
+            }
+            
+            if (text.includes('<!DOCTYPE') || text.includes('<html')) {
+                throw new Error('El servidor devolvió una página HTML. Esto puede indicar que tu sesión expiró o no tienes permisos. Por favor, recarga la página e inicia sesión nuevamente.');
+            }
+            
+            throw new Error(`Error ${response.status}: El servidor devolvió: ${text.substring(0, 100)}`);
+        }
+
+        if (!response.ok) {
+            // Si la respuesta no es OK pero es JSON, leer el error
+            const errorData = await response.json();
+            const errorMessage = errorData.error || `Error ${response.status}: ${response.statusText}`;
+            throw new Error(errorMessage);
+        }
+
         const data = await response.json();
-        if (data.token) {
+        // El endpoint devuelve {success: true, token: ...}
+        if (data.success && data.token) {
             document.getElementById('generated-token').textContent = data.token;
             document.getElementById('token-modal').classList.remove('active');
             // Limpiar formulario
@@ -378,7 +424,12 @@ async function createToken() {
             alert('Error al crear token: ' + (data.error || 'Error desconocido'));
         }
     } catch (error) {
-        alert('Error al crear token: ' + error.message);
+        console.error('Error completo:', error);
+        let errorMessage = error.message;
+        if (error.message.includes('<!DOCTYPE')) {
+            errorMessage = 'El servidor devolvió una página HTML en lugar de JSON. Verifica que estés autenticado correctamente.';
+        }
+        alert('Error al crear token: ' + errorMessage);
     } finally {
         // Rehabilitar botón
         if (submitBtn) {
@@ -1363,7 +1414,7 @@ function setupAdminListeners() {
         const expiresHours = parseInt(document.getElementById('reg-token-expires').value) || 24;
         
         try {
-            const response = await fetch('/api/admin/registration-tokens', {
+            const response = await fetch('/api/tokens', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -1440,7 +1491,7 @@ function setupAdminListeners() {
 
 async function loadRegistrationTokens() {
     try {
-        const response = await fetch('/api/admin/registration-tokens?include_used=false');
+        const response = await fetch('/api/tokens?include_used=false');
         const data = await response.json();
         
         const tbody = document.getElementById('registration-tokens-table-body');

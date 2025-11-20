@@ -6,6 +6,7 @@ from flask_cors import CORS
 import os
 import requests
 import json
+import datetime
 from functools import wraps
 
 # Importar sistema de autenticación
@@ -22,13 +23,51 @@ app.secret_key = os.environ.get('SECRET_KEY', 'aspers-secret-key-change-in-produ
 CORS(app)
 
 # Inicializar base de datos de autenticación al iniciar
-init_auth_db()
+try:
+    init_auth_db()
+    print("✅ Base de datos de autenticación inicializada correctamente")
+except Exception as e:
+    print(f"⚠️ Error al inicializar base de datos: {e}")
+    print("⚠️ La aplicación continuará, pero algunas funciones pueden no funcionar")
+
+# Health check endpoints (simplificado - sin import externo)
 
 # Configuración
-API_URL = os.environ.get('API_URL', 'http://localhost:5000')
+# Detectar si estamos en Render o en desarrollo local
+RENDER_EXTERNAL_URL = os.environ.get('RENDER_EXTERNAL_URL')  # Render proporciona esta variable
+IS_RENDER = bool(RENDER_EXTERNAL_URL)
+
+if IS_RENDER:
+    # En Render, la API está en la misma URL base (mismo servidor)
+    # Usar la URL externa de Render o la misma base
+    base_url = RENDER_EXTERNAL_URL.rstrip('/')
+    API_BASE_URL = base_url  # URL base sin /api
+else:
+    # En desarrollo local, usar localhost:5000
+    API_BASE_URL = os.environ.get('API_URL', 'http://localhost:5000')
+
 # IMPORTANTE: La API Key debe coincidir con la que genera api_server.py
 # Por defecto, api_server.py genera una aleatoria. Para desarrollo, puedes usar una fija.
 API_KEY = os.environ.get('API_KEY', None)  # None = no requiere API key para desarrollo
+
+def get_api_url(endpoint):
+    """Construye la URL completa de la API para un endpoint"""
+    # Asegurar que el endpoint empiece con /api/
+    endpoint = endpoint.lstrip('/')
+    if not endpoint.startswith('api/'):
+        endpoint = f"api/{endpoint}"
+    
+    # Si API_URL está configurado explícitamente, usarlo
+    api_url_env = os.environ.get('API_URL')
+    if api_url_env:
+        return f"{api_url_env.rstrip('/')}/{endpoint}"
+    
+    # Si estamos en Render y no hay API_URL configurado, usar la URL base
+    if IS_RENDER:
+        return f"{API_BASE_URL}/{endpoint}"
+    else:
+        # En desarrollo local, usar API_BASE_URL (que es localhost:5000)
+        return f"{API_BASE_URL}/{endpoint}"
 
 def require_api_key(f):
     """Decorador para requerir API key"""
@@ -42,6 +81,16 @@ def require_api_key(f):
 def index():
     """Página principal - Sobre ASPERS"""
     return render_template('index.html')
+
+@app.route('/health', methods=['GET'])
+@app.route('/healthz', methods=['GET'])
+def health_check():
+    """Health check endpoint para Render"""
+    return jsonify({
+        'status': 'ok',
+        'service': 'aspers-web-app',
+        'timestamp': datetime.datetime.now().isoformat()
+    }), 200
 
 @app.route('/diagnostico-login')
 def diagnostico_login():
@@ -336,7 +385,7 @@ def get_statistics():
         if API_KEY:
             headers['X-API-Key'] = API_KEY
         response = requests.get(
-            f"{API_URL}/api/statistics",
+            get_api_url('/api/statistics'),
             headers=headers,
             timeout=10
         )
@@ -347,9 +396,19 @@ def get_statistics():
         else:
             return jsonify({'error': f'Error al obtener estadísticas: {response.status_code}', 'details': response.text}), 500
     except requests.exceptions.ConnectionError:
-        return jsonify({'error': 'No se pudo conectar a la API. Verifica que esté corriendo en http://localhost:5000'}), 503
+        error_msg = 'No se pudo conectar a la API.'
+        if IS_RENDER:
+            error_msg += ' En Render, asegúrate de que la API esté configurada correctamente.'
+        else:
+            error_msg += ' Verifica que esté corriendo en http://localhost:5000'
+        return jsonify({'error': error_msg}), 503
+    except requests.exceptions.Timeout:
+        return jsonify({'error': 'Timeout al conectar con la API. La API puede estar sobrecargada.'}), 504
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        import traceback
+        print(f"Error en create_token: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({'error': f'Error inesperado: {str(e)}'}), 500
 
 # ============================================================
 # API DE AUTENTICACIÓN
@@ -896,80 +955,77 @@ def api_admin_update_company():
 # ============================================================
 
 @app.route('/api/tokens', methods=['GET'])
-@login_required
+@admin_required
 def list_tokens():
-    """Lista tokens desde la API"""
-    try:
-        headers = {}
-        if API_KEY:
-            headers['X-API-Key'] = API_KEY
-        response = requests.get(
-            f"{API_URL}/api/tokens",
-            headers=headers,
-            timeout=10
-        )
-        if response.status_code == 200:
-            return jsonify(response.json())
-        elif response.status_code == 401:
-            return jsonify({'error': 'API Key inválida. Verifica la configuración.'}), 401
-        else:
-            return jsonify({'error': f'Error al obtener tokens: {response.status_code}', 'details': response.text}), 500
-    except requests.exceptions.ConnectionError:
-        return jsonify({'error': 'No se pudo conectar a la API. Verifica que esté corriendo en http://localhost:5000'}), 503
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    """Lista tokens - Usa endpoint local en lugar de proxy"""
+    # Redirigir al endpoint local de administración
+    include_used = request.args.get('include_used', 'false').lower() == 'true'
+    tokens = list_registration_tokens(include_used=include_used)
+    return jsonify({'success': True, 'tokens': tokens})
 
 @app.route('/api/tokens', methods=['POST'])
-@login_required
+@admin_required
 def create_token():
-    """Crea un nuevo token"""
-    try:
-        data = request.json or {}
-        headers = {}
-        if API_KEY:
-            headers['X-API-Key'] = API_KEY
-        response = requests.post(
-            f"{API_URL}/api/tokens",
-            json=data,
-            headers=headers,
-            timeout=10
-        )
-        if response.status_code == 201:
-            return jsonify(response.json())
-        elif response.status_code == 401:
-            return jsonify({'error': 'API Key inválida. Verifica la configuración.'}), 401
-        else:
-            return jsonify({'error': f'Error al crear token: {response.status_code}', 'details': response.text}), 500
-    except requests.exceptions.ConnectionError:
-        return jsonify({'error': 'No se pudo conectar a la API. Verifica que esté corriendo en http://localhost:5000'}), 503
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    """Crea un nuevo token - Usa endpoint local en lugar de proxy"""
+    # Redirigir al endpoint local de administración
+    data = request.json or {}
+    expires_hours = data.get('expires_hours', data.get('expires_days', 1) * 24)
+    description = data.get('description', '')
+    company_id = data.get('company_id')
+    is_admin_token = data.get('is_admin_token', False)
+    
+    created_by = session.get('user_id')
+    if not created_by:
+        return jsonify({'success': False, 'error': 'Usuario no autenticado'}), 401
+    
+    result = create_registration_token(
+        created_by=created_by,
+        company_id=company_id,
+        expires_hours=expires_hours,
+        description=description,
+        is_admin_token=is_admin_token
+    )
+    
+    if result['success']:
+        return jsonify({
+            'success': True,
+            'token': result['token'],
+            'token_id': result['token_id'],
+            'expires_at': result['expires_at'].isoformat(),
+            'company_id': company_id,
+            'is_admin_token': is_admin_token
+        }), 201
+    else:
+        return jsonify({'success': False, 'error': result['error']}), 400
 
 @app.route('/api/tokens/<int:token_id>', methods=['DELETE'])
-@require_api_key
+@admin_required
 def delete_token(token_id):
-    """Elimina permanentemente un token"""
+    """Elimina permanentemente un token - Usa función local"""
     try:
-        headers = {}
-        if API_KEY:
-            headers['X-API-Key'] = API_KEY
-        response = requests.delete(
-            f"{API_URL}/api/tokens/{token_id}",
-            headers=headers,
-            timeout=10
-        )
-        if response.status_code == 200:
-            return jsonify(response.json())
-        elif response.status_code == 404:
-            return jsonify({'error': 'Token no encontrado'}), 404
-        elif response.status_code == 401:
-            return jsonify({'error': 'API Key inválida. Verifica la configuración.'}), 401
-        else:
-            return jsonify({'error': f'Error al eliminar token: {response.status_code}', 'details': response.text}), 500
-    except requests.exceptions.ConnectionError:
-        return jsonify({'error': 'No se pudo conectar a la API. Verifica que esté corriendo en http://localhost:5000'}), 503
+        import sqlite3
+        from auth import DATABASE
+        
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        
+        # Verificar que el token existe
+        cursor.execute('SELECT id FROM registration_tokens WHERE id = ?', (token_id,))
+        if not cursor.fetchone():
+            conn.close()
+            return jsonify({'success': False, 'error': 'Token no encontrado'}), 404
+        
+        # Eliminar el token
+        cursor.execute('DELETE FROM registration_tokens WHERE id = ?', (token_id,))
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': 'Token eliminado permanentemente'}), 200
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        import traceback
+        print(f"Error al eliminar token: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({'success': False, 'error': f'Error al eliminar token: {str(e)}'}), 500
 
 @app.route('/api/scans', methods=['GET'])
 @login_required
@@ -982,7 +1038,7 @@ def list_scans():
         if API_KEY:
             headers['X-API-Key'] = API_KEY
         response = requests.get(
-            f"{API_URL}/api/scans",
+            get_api_url('/api/scans'),
             params={'limit': limit, 'offset': offset},
             headers=headers,
             timeout=10
@@ -994,9 +1050,19 @@ def list_scans():
         else:
             return jsonify({'error': f'Error al obtener escaneos: {response.status_code}', 'details': response.text}), 500
     except requests.exceptions.ConnectionError:
-        return jsonify({'error': 'No se pudo conectar a la API. Verifica que esté corriendo en http://localhost:5000'}), 503
+        error_msg = 'No se pudo conectar a la API.'
+        if IS_RENDER:
+            error_msg += ' En Render, asegúrate de que la API esté configurada correctamente.'
+        else:
+            error_msg += ' Verifica que esté corriendo en http://localhost:5000'
+        return jsonify({'error': error_msg}), 503
+    except requests.exceptions.Timeout:
+        return jsonify({'error': 'Timeout al conectar con la API. La API puede estar sobrecargada.'}), 504
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        import traceback
+        print(f"Error en create_token: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({'error': f'Error inesperado: {str(e)}'}), 500
 
 @app.route('/api/scans/<int:scan_id>', methods=['GET'])
 @login_required
@@ -1007,7 +1073,7 @@ def get_scan(scan_id):
         if API_KEY:
             headers['X-API-Key'] = API_KEY
         response = requests.get(
-            f"{API_URL}/api/scans/{scan_id}",
+            get_api_url(f'/api/scans/{scan_id}'),
             headers=headers,
             timeout=10
         )
@@ -1037,13 +1103,18 @@ def submit_feedback():
         # Intentar conectar a la API
         try:
             response = requests.post(
-                f"{API_URL}/api/feedback",
+                get_api_url('/api/feedback'),
                 json=data,
                 headers=headers,
                 timeout=10
             )
         except requests.exceptions.ConnectionError:
-            return jsonify({'error': 'No se pudo conectar a la API. Verifica que esté corriendo en http://localhost:5000'}), 503
+            error_msg = 'No se pudo conectar a la API.'
+            if IS_RENDER:
+                error_msg += ' En Render, asegúrate de que la API esté configurada correctamente.'
+            else:
+                error_msg += ' Verifica que esté corriendo en http://localhost:5000'
+            return jsonify({'error': error_msg}), 503
         except requests.exceptions.Timeout:
             return jsonify({'error': 'Timeout al conectar con la API'}), 504
         except Exception as e:
@@ -1093,13 +1164,18 @@ def submit_feedback_batch():
         # Intentar conectar a la API
         try:
             response = requests.post(
-                f"{API_URL}/api/feedback/batch",
+                get_api_url('/api/feedback/batch'),
                 json=data,
                 headers=headers,
                 timeout=30
             )
         except requests.exceptions.ConnectionError:
-            return jsonify({'error': 'No se pudo conectar a la API. Verifica que esté corriendo en http://localhost:5000'}), 503
+            error_msg = 'No se pudo conectar a la API.'
+            if IS_RENDER:
+                error_msg += ' En Render, asegúrate de que la API esté configurada correctamente.'
+            else:
+                error_msg += ' Verifica que esté corriendo en http://localhost:5000'
+            return jsonify({'error': error_msg}), 503
         except requests.exceptions.Timeout:
             return jsonify({'error': 'Timeout al conectar con la API'}), 504
         except Exception as e:
@@ -1144,7 +1220,7 @@ def get_feedback(result_id):
         if API_KEY:
             headers['X-API-Key'] = API_KEY
         response = requests.get(
-            f"{API_URL}/api/feedback/{result_id}",
+            get_api_url(f'/api/feedback/{result_id}'),
             headers=headers,
             timeout=10
         )
@@ -1162,7 +1238,7 @@ def update_model():
         if API_KEY:
             headers['X-API-Key'] = API_KEY
         response = requests.post(
-            f"{API_URL}/api/update-model",
+            get_api_url('/api/update-model'),
             headers=headers,
             timeout=60
         )
@@ -1179,9 +1255,19 @@ def update_model():
             })
         return jsonify({'error': f'Error al actualizar modelo: {response.status_code}', 'details': response.text}), response.status_code
     except requests.exceptions.ConnectionError:
-        return jsonify({'error': 'No se pudo conectar a la API. Verifica que esté corriendo en http://localhost:5000'}), 503
+        error_msg = 'No se pudo conectar a la API.'
+        if IS_RENDER:
+            error_msg += ' En Render, asegúrate de que la API esté configurada correctamente.'
+        else:
+            error_msg += ' Verifica que esté corriendo en http://localhost:5000'
+        return jsonify({'error': error_msg}), 503
+    except requests.exceptions.Timeout:
+        return jsonify({'error': 'Timeout al conectar con la API. La API puede estar sobrecargada.'}), 504
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        import traceback
+        print(f"Error en create_token: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({'error': f'Error inesperado: {str(e)}'}), 500
 
 @app.route('/api/learned-patterns', methods=['GET'])
 def get_learned_patterns():
@@ -1191,7 +1277,7 @@ def get_learned_patterns():
         if API_KEY:
             headers['X-API-Key'] = API_KEY
         response = requests.get(
-            f"{API_URL}/api/learned-patterns",
+            get_api_url('/api/learned-patterns'),
             headers=headers,
             timeout=10
         )
@@ -1206,7 +1292,7 @@ def get_latest_ai_model():
     """Obtiene el modelo de IA más reciente - SIN REQUERIR API KEY (para clientes)"""
     try:
         response = requests.get(
-            f"{API_URL}/api/ai-model/latest",
+            get_api_url('/api/ai-model/latest'),
             timeout=10
         )
         if response.status_code == 200:
@@ -1237,7 +1323,7 @@ def generate_app():
                 if API_KEY:
                     headers['X-API-Key'] = API_KEY
                 update_response = requests.post(
-                    f"{API_URL}/api/update-model",
+                    get_api_url('/api/update-model'),
                     headers=headers,
                     timeout=30
                 )
@@ -1366,7 +1452,7 @@ def generate_app():
                 if API_KEY:
                     headers['X-API-Key'] = API_KEY
                 version_response = requests.post(
-                    f"{API_URL}/api/versions",
+                    get_api_url('/api/versions'),
                     json={
                         'version': f'1.{version}',
                         'download_url': f'/download/{download_filename}',
@@ -1421,7 +1507,7 @@ def get_scan_report_html(scan_id):
         if API_KEY:
             headers['X-API-Key'] = API_KEY
         response = requests.get(
-            f"{API_URL}/api/scans/{scan_id}/report-html",
+            get_api_url(f'/api/scans/{scan_id}/report-html'),
             headers=headers,
             timeout=30
         )
@@ -1533,7 +1619,8 @@ def import_echo_scan():
 
 if __name__ == '__main__':
     print("🌐 Iniciando aplicación web de ASPERS Projects...")
-    print(f"📡 Conectado a API: {API_URL}")
+    api_url_display = os.environ.get('API_URL') or (API_BASE_URL if IS_RENDER else API_BASE_URL)
+    print(f"📡 Conectado a API: {api_url_display}")
     print(f"🔑 API Key configurada: {'Sí' if API_KEY != 'change-this-in-production' else 'No (usar valor por defecto)'}")
     print("⚠️  NOTA: Asegúrate de que la API esté corriendo en http://localhost:5000")
     print("⚠️  NOTA: La API Key debe coincidir con la configurada en api_server.py")
