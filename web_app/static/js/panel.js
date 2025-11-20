@@ -377,18 +377,20 @@ async function createToken() {
         // Convertir días a horas para el endpoint
         const expires_hours = expires * 24;
         
+        // Crear token de ESCANEO (para la aplicación .exe SS)
+        // NOTA: Este endpoint crea tokens de ESCANEO, NO de registro de usuarios
+        // Los tokens de registro están en /api/admin/registration-tokens
         const response = await fetch('/api/tokens', {
             method: 'POST',
             headers: { 
                 'Content-Type': 'application/json',
-                'Accept': 'application/json' // Asegurar que esperamos JSON
+                'Accept': 'application/json'
             },
-            credentials: 'same-origin', // Incluir cookies de sesión
+            credentials: 'same-origin',
             body: JSON.stringify({
                 description,
                 expires_hours: expires_hours,
-                company_id: null, // Token general (no de empresa)
-                is_admin_token: false // Token normal, no de admin
+                max_uses: maxUses === -1 ? -1 : maxUses
             })
         });
 
@@ -1430,7 +1432,8 @@ async function compileApp() {
 // ============================================================
 
 function setupAdminListeners() {
-    // Formulario de generación de token de registro
+    // Formulario de generación de token de REGISTRO (solo para admins)
+    // NOTA: Los tokens de ESCANEO están en /api/tokens y pueden ser creados por cualquier usuario
     document.getElementById('registration-token-form')?.addEventListener('submit', async (e) => {
         e.preventDefault();
         
@@ -1438,7 +1441,8 @@ function setupAdminListeners() {
         const expiresHours = parseInt(document.getElementById('reg-token-expires').value) || 24;
         
         try {
-            const response = await fetch('/api/tokens', {
+            // Usar endpoint correcto para tokens de REGISTRO (no de escaneo)
+            const response = await fetch('/api/admin/registration-tokens', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -1515,7 +1519,8 @@ function setupAdminListeners() {
 
 async function loadRegistrationTokens() {
     try {
-        const response = await fetch('/api/tokens?include_used=false');
+        // Usar endpoint correcto para tokens de REGISTRO (no de escaneo)
+        const response = await fetch('/api/admin/registration-tokens?include_used=false');
         const data = await response.json();
         
         const tbody = document.getElementById('registration-tokens-table-body');

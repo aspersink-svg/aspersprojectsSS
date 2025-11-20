@@ -1021,24 +1021,54 @@ def api_admin_update_company():
 # API PROXY - Conecta con la API REST
 # ============================================================
 
-# IMPORTANTE: Separación de tokens
-# - /api/tokens -> Tokens de ESCANEO (para la aplicación SS) - Tabla: scan_tokens
-# - /api/registration-tokens -> Tokens de REGISTRO (para usuarios) - Tabla: registration_tokens
+# IMPORTANTE: Separación COMPLETA de tokens
+# 
+# TOKENS DE ESCANEO (para la aplicación .exe SS):
+# - Endpoint: /api/tokens (GET/POST/DELETE)
+# - Tabla: scan_tokens (en BD de la API)
+# - Permisos: CUALQUIER usuario autenticado puede crear/listar/eliminar sus propios tokens
+#             Los admins pueden ver/eliminar todos los tokens
+# - Uso: Autenticación en la aplicación cliente SS (.exe)
+#
+# TOKENS DE REGISTRO (para crear usuarios):
+# - Endpoints: /api/admin/registration-tokens (solo admin)
+#              /api/company/registration-tokens (admin de empresa)
+# - Tabla: registration_tokens (en BD de autenticación)
+# - Permisos: Solo admins y admins de empresa pueden crear tokens de registro
+# - Uso: Registro de nuevos usuarios en el sistema web
 
 @app.route('/api/tokens', methods=['GET'])
-@admin_required
+@login_required
 def list_tokens():
-    """Lista tokens de ESCANEO (para la aplicación SS) - CORREGIDO"""
+    """Lista tokens de ESCANEO (para la aplicación SS) - Cualquier usuario autenticado puede ver sus tokens"""
     try:
+        user = get_user_by_id(session.get('user_id'))
+        if not user:
+            return jsonify({'success': False, 'error': 'Usuario no encontrado'}), 401
+        
+        username = user.get('username', '')
+        is_admin = is_admin(user)
+        
         # Listar tokens de ESCANEO desde la BD de la API (scan_tokens)
         with get_api_db_cursor() as cursor:
-            cursor.execute('''
-                SELECT id, token, created_at, expires_at, used_count, max_uses, 
-                       is_active, created_by, description
-                FROM scan_tokens
-                ORDER BY created_at DESC
-                LIMIT 100
-            ''')
+            # Si es admin, mostrar todos los tokens. Si no, solo los del usuario
+            if is_admin:
+                cursor.execute('''
+                    SELECT id, token, created_at, expires_at, used_count, max_uses, 
+                           is_active, created_by, description
+                    FROM scan_tokens
+                    ORDER BY created_at DESC
+                    LIMIT 100
+                ''')
+            else:
+                cursor.execute('''
+                    SELECT id, token, created_at, expires_at, used_count, max_uses, 
+                           is_active, created_by, description
+                    FROM scan_tokens
+                    WHERE created_by = ?
+                    ORDER BY created_at DESC
+                    LIMIT 100
+                ''', (username,))
             
             tokens = []
             for row in cursor.fetchall():
@@ -1060,9 +1090,9 @@ def list_tokens():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/tokens', methods=['POST'])
-@admin_required
+@login_required
 def create_token():
-    """Crea un nuevo token de ESCANEO (para la aplicación SS) - CORREGIDO"""
+    """Crea un nuevo token de ESCANEO (para la aplicación SS) - Cualquier usuario autenticado puede crear"""
     import secrets
     try:
         data = request.json or {}
@@ -1077,10 +1107,14 @@ def create_token():
         
         # Obtener usuario actual
         user = get_user_by_id(session.get('user_id'))
-        created_by = user.get('username', 'web_app') if user else 'web_app'
+        if not user:
+            return jsonify({'success': False, 'error': 'Usuario no encontrado'}), 401
+        
+        created_by = user.get('username', 'web_app')
         
         # Crear token de ESCANEO directamente en la BD de la API (scan_tokens)
-        # NOTA: Este es un token de ESCANEO, no de registro de usuarios
+        # NOTA: Este es un token de ESCANEO, NO de registro de usuarios
+        # Los tokens de registro están en /api/admin/registration-tokens o /api/company/registration-tokens
         token = secrets.token_urlsafe(32)
         expires_at = None
         if expires_days > 0:
@@ -1102,7 +1136,8 @@ def create_token():
             'expires_at': expires_at,
             'max_uses': max_uses,
             'description': description,
-            'type': 'scan_token'  # Indicar que es un token de escaneo
+            'created_by': created_by,
+            'type': 'scan_token'  # Indicar que es un token de escaneo (NO de registro)
         }), 201
     except Exception as e:
         import traceback
@@ -1112,16 +1147,30 @@ def create_token():
         return jsonify({'success': False, 'error': error_msg}), 500
 
 @app.route('/api/tokens/<int:token_id>', methods=['DELETE'])
-@admin_required
+@login_required
 def delete_token(token_id):
-    """Elimina permanentemente un token de ESCANEO - CORREGIDO"""
+    """Elimina permanentemente un token de ESCANEO - Usuario puede eliminar sus propios tokens, admin puede eliminar todos"""
     try:
+        user = get_user_by_id(session.get('user_id'))
+        if not user:
+            return jsonify({'success': False, 'error': 'Usuario no encontrado'}), 401
+        
+        username = user.get('username', '')
+        is_admin_user = is_admin(user)
+        
         # Eliminar token de ESCANEO desde la BD de la API (scan_tokens)
         with get_api_db_cursor() as cursor:
-            # Verificar que el token existe
-            cursor.execute('SELECT id FROM scan_tokens WHERE id = ?', (token_id,))
-            if not cursor.fetchone():
+            # Verificar que el token existe y obtener el creador
+            cursor.execute('SELECT id, created_by FROM scan_tokens WHERE id = ?', (token_id,))
+            token_row = cursor.fetchone()
+            if not token_row:
                 return jsonify({'success': False, 'error': 'Token no encontrado'}), 404
+            
+            token_creator = token_row[1]
+            
+            # Verificar permisos: solo el creador o un admin puede eliminar
+            if not is_admin_user and token_creator != username:
+                return jsonify({'success': False, 'error': 'No tienes permiso para eliminar este token'}), 403
             
             cursor.execute('DELETE FROM scan_tokens WHERE id = ?', (token_id,))
         
@@ -1311,148 +1360,305 @@ def get_scan(scan_id):
 @app.route('/api/feedback', methods=['POST'])
 @login_required
 def submit_feedback():
-    """Envía feedback del staff sobre un resultado"""
+    """Envía feedback del staff sobre un resultado - OPTIMIZADO: Acceso directo a BD"""
+    import re
+    
     try:
         data = request.json or {}
         if not data:
             return jsonify({'error': 'No se recibieron datos'}), 400
         
-        # Validar que tenga los campos requeridos
-        if 'result_id' not in data:
+        result_id = data.get('result_id')
+        if not result_id:
             return jsonify({'error': 'Se requiere result_id'}), 400
         
-        headers = {}
-        if API_KEY:
-            headers['X-API-Key'] = API_KEY
+        staff_verification = data.get('verification') or data.get('staff_verification')
+        staff_notes = data.get('notes') or data.get('staff_notes', '')
+        verified_by = data.get('verified_by', session.get('username', 'staff'))
         
-        # Intentar conectar a la API
-        try:
-            response = requests.post(
-                get_api_url('/api/feedback'),
-                json=data,
-                headers=headers,
-                timeout=5  # Reducido de 10 a 5 segundos
-            )
-        except requests.exceptions.ConnectionError:
-            error_msg = 'No se pudo conectar a la API.'
-            if IS_RENDER:
-                error_msg += ' En Render, asegúrate de que la API esté configurada correctamente.'
-            else:
-                error_msg += ' Verifica que esté corriendo en http://localhost:5000'
-            return jsonify({'error': error_msg}), 503
-        except requests.exceptions.Timeout:
-            return jsonify({'error': 'Timeout al conectar con la API'}), 504
-        except Exception as e:
-            return jsonify({'error': f'Error de conexión: {str(e)}'}), 500
+        if not staff_verification:
+            return jsonify({'error': 'Se requiere verification o staff_verification'}), 400
         
-        # Procesar respuesta
-        if response.status_code == 201:
-            return jsonify(response.json()), 201
-        elif response.status_code == 400:
-            # Intentar obtener mensaje de error más detallado
-            try:
-                error_data = response.json()
-                return jsonify({'error': error_data.get('error', 'Error al enviar feedback')}), 400
-            except:
-                return jsonify({'error': f'Error al enviar feedback: {response.text}'}), 400
-        else:
-            # Otros códigos de error
-            try:
-                error_data = response.json()
-                return jsonify({'error': error_data.get('error', f'Error {response.status_code}')}), response.status_code
-            except:
-                return jsonify({'error': f'Error al enviar feedback: {response.status_code} - {response.text}'}), response.status_code
+        if staff_verification not in ['hack', 'legitimate']:
+            return jsonify({'error': f'Verificación debe ser "hack" o "legitimate"'}), 400
+        
+        # Acceso directo a BD (SIN HTTP - MUCHO MÁS RÁPIDO)
+        with get_api_db_cursor() as cursor:
+            # Obtener información del resultado
+            cursor.execute('''
+                SELECT scan_id, issue_name, issue_path, file_hash, detected_patterns, 
+                       obfuscation_detected, confidence
+                FROM scan_results
+                WHERE id = ?
+            ''', (result_id,))
+            
+            result = cursor.fetchone()
+            if not result:
+                return jsonify({'error': f'Resultado con id {result_id} no encontrado'}), 404
+            
+            scan_id, issue_name, issue_path, file_hash, detected_patterns_json, obfuscation, confidence = result
+            
+            # Guardar feedback
+            cursor.execute('''
+                INSERT INTO staff_feedback (
+                    result_id, scan_id, staff_verification, staff_notes, verified_by,
+                    file_hash, issue_name, issue_path
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (result_id, scan_id, staff_verification, staff_notes, verified_by,
+                  file_hash, issue_name, issue_path))
+            
+            feedback_id = cursor.lastrowid
+            
+            # Extraer patrones si es hack
+            extracted_patterns = []
+            extracted_features = {}
+            
+            if staff_verification == 'hack':
+                name_lower = (issue_name or '').lower()
+                path_lower = (issue_path or '').lower()
+                hack_keywords = re.findall(r'\b(vape|entropy|inject|bypass|killaura|aimbot|reach|velocity|scaffold|fly|xray|ghost|stealth|undetected|sigma|flux|future|astolfo|whiteout|liquidbounce|wurst|impact)\w*\b', 
+                                          name_lower + ' ' + path_lower, re.IGNORECASE)
+                extracted_patterns = list(set(hack_keywords))
+                
+                # Guardar hash si existe
+                if file_hash:
+                    cursor.execute('''
+                        INSERT OR REPLACE INTO learned_hashes (
+                            file_hash, is_hack, confirmed_count, last_confirmed_at, source_feedback_id
+                        ) VALUES (?, 1, 
+                            COALESCE((SELECT confirmed_count FROM learned_hashes WHERE file_hash = ?), 0) + 1,
+                            CURRENT_TIMESTAMP, ?
+                        )
+                    ''', (file_hash, file_hash, feedback_id))
+                
+                # Guardar patrones aprendidos
+                if extracted_patterns:
+                    pattern_data = [(pattern, feedback_id, pattern) for pattern in extracted_patterns]
+                    cursor.executemany('''
+                        INSERT OR REPLACE INTO learned_patterns (
+                            pattern_type, pattern_value, pattern_category, source_feedback_id,
+                            learned_from_count, last_updated_at, is_active
+                        ) VALUES ('keyword', ?, 'high_risk', ?, 
+                            COALESCE((SELECT learned_from_count FROM learned_patterns WHERE pattern_value = ?), 0) + 1,
+                            CURRENT_TIMESTAMP, 1
+                        )
+                    ''', pattern_data)
+                
+                extracted_features = {
+                    'obfuscation': bool(obfuscation),
+                    'confidence': confidence or 0
+                }
+            elif staff_verification == 'legitimate' and file_hash:
+                # Si es legítimo, guardar hash en whitelist
+                cursor.execute('''
+                    INSERT OR REPLACE INTO learned_hashes (
+                        file_hash, is_hack, confirmed_count, last_confirmed_at, source_feedback_id
+                    ) VALUES (?, 0, 
+                        COALESCE((SELECT confirmed_count FROM learned_hashes WHERE file_hash = ?), 0) + 1,
+                        CURRENT_TIMESTAMP, ?
+                    )
+                ''', (file_hash, file_hash, feedback_id))
+            
+            # Actualizar feedback con características extraídas
+            cursor.execute('''
+                UPDATE staff_feedback
+                SET extracted_patterns = ?, extracted_features = ?
+                WHERE id = ?
+            ''', (json.dumps(extracted_patterns), json.dumps(extracted_features), feedback_id))
+            
+            # Limpiar caché relacionado
+            if f'scan_{scan_id}' in _stats_cache:
+                del _stats_cache[f'scan_{scan_id}']
+            if 'statistics' in _stats_cache:
+                del _stats_cache['statistics']
+            if 'learned_patterns' in _stats_cache:
+                del _stats_cache['learned_patterns']
+        
+        return jsonify({
+            'success': True,
+            'feedback_id': feedback_id,
+            'extracted_patterns': extracted_patterns,
+            'extracted_features': extracted_features,
+            'message': 'Feedback guardado exitosamente'
+        }), 201
     except Exception as e:
         import traceback
-        return jsonify({'error': f'Error inesperado: {str(e)}', 'traceback': traceback.format_exc()}), 500
+        print(f"Error en submit_feedback: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({'error': f'Error inesperado: {str(e)}'}), 500
 
 @app.route('/api/feedback/batch', methods=['POST'])
 @login_required
 def submit_feedback_batch():
-    """Envía feedback masivo del staff sobre múltiples resultados"""
+    """Envía feedback masivo del staff sobre múltiples resultados - OPTIMIZADO: Acceso directo a BD"""
+    import re
+    
     try:
         data = request.json or {}
         if not data:
             return jsonify({'error': 'No se recibieron datos'}), 400
         
-        # Validar que tenga los campos requeridos
-        if 'result_ids' not in data or not isinstance(data.get('result_ids'), list):
+        result_ids = data.get('result_ids', [])
+        if not result_ids or not isinstance(result_ids, list):
             return jsonify({'error': 'Se requiere result_ids como lista'}), 400
         
-        if len(data.get('result_ids', [])) == 0:
+        if len(result_ids) == 0:
             return jsonify({'error': 'La lista de result_ids está vacía'}), 400
         
-        headers = {}
-        if API_KEY:
-            headers['X-API-Key'] = API_KEY
+        staff_verification = data.get('verification') or data.get('staff_verification')
+        staff_notes = data.get('notes') or data.get('staff_notes', '')
+        verified_by = data.get('verified_by', session.get('username', 'staff'))
         
-        # Intentar conectar a la API
-        try:
-            response = requests.post(
-                get_api_url('/api/feedback/batch'),
-                json=data,
-                headers=headers,
-                timeout=30
-            )
-        except requests.exceptions.ConnectionError:
-            error_msg = 'No se pudo conectar a la API.'
-            if IS_RENDER:
-                error_msg += ' En Render, asegúrate de que la API esté configurada correctamente.'
-            else:
-                error_msg += ' Verifica que esté corriendo en http://localhost:5000'
-            return jsonify({'error': error_msg}), 503
-        except requests.exceptions.Timeout:
-            return jsonify({'error': 'Timeout al conectar con la API'}), 504
-        except Exception as e:
-            return jsonify({'error': f'Error de conexión: {str(e)}'}), 500
+        if not staff_verification:
+            return jsonify({'error': 'Se requiere verification o staff_verification'}), 400
         
-        # Procesar respuesta
-        if response.status_code == 201:
-            return jsonify(response.json()), 201
-        elif response.status_code == 404:
-            return jsonify({
-                'error': f'Endpoint no encontrado en la API. Verifica que la API esté corriendo y tenga el endpoint /api/feedback/batch. Status: {response.status_code}',
-                'details': response.text[:200]
-            }), 404
-        elif response.status_code == 400:
-            try:
-                error_data = response.json()
-                return jsonify({'error': error_data.get('error', 'Error al enviar feedback masivo')}), 400
-            except:
-                return jsonify({'error': f'Error al enviar feedback masivo: {response.text}'}), 400
-        else:
-            try:
-                error_data = response.json()
-                return jsonify({
-                    'error': error_data.get('error', f'Error {response.status_code}'),
-                    'status_code': response.status_code,
-                    'response_text': response.text[:200]
-                }), response.status_code
-            except:
-                return jsonify({
-                    'error': f'Error al enviar feedback masivo: {response.status_code}',
-                    'response_text': response.text[:200]
-                }), response.status_code
+        if staff_verification not in ['hack', 'legitimate']:
+            return jsonify({'error': f'Verificación debe ser "hack" o "legitimate"'}), 400
+        
+        # Acceso directo a BD (SIN HTTP - MUCHO MÁS RÁPIDO)
+        feedback_ids = []
+        all_extracted_patterns = []
+        
+        with get_api_db_cursor() as cursor:
+            # Procesar cada resultado
+            for result_id in result_ids:
+                # Obtener información del resultado
+                cursor.execute('''
+                    SELECT scan_id, issue_name, issue_path, file_hash, detected_patterns, 
+                           obfuscation_detected, confidence
+                    FROM scan_results
+                    WHERE id = ?
+                ''', (result_id,))
+                
+                result = cursor.fetchone()
+                if not result:
+                    continue  # Saltar si no existe
+                
+                scan_id, issue_name, issue_path, file_hash, detected_patterns_json, obfuscation, confidence = result
+                
+                # Guardar feedback
+                cursor.execute('''
+                    INSERT INTO staff_feedback (
+                        result_id, scan_id, staff_verification, staff_notes, verified_by,
+                        file_hash, issue_name, issue_path
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (result_id, scan_id, staff_verification, staff_notes, verified_by,
+                      file_hash, issue_name, issue_path))
+                
+                feedback_id = cursor.lastrowid
+                feedback_ids.append(feedback_id)
+                
+                # Extraer patrones si es hack
+                extracted_patterns = []
+                extracted_features = {}
+                
+                if staff_verification == 'hack':
+                    name_lower = (issue_name or '').lower()
+                    path_lower = (issue_path or '').lower()
+                    hack_keywords = re.findall(r'\b(vape|entropy|inject|bypass|killaura|aimbot|reach|velocity|scaffold|fly|xray|ghost|stealth|undetected|sigma|flux|future|astolfo|whiteout|liquidbounce|wurst|impact)\w*\b', 
+                                              name_lower + ' ' + path_lower, re.IGNORECASE)
+                    extracted_patterns = list(set(hack_keywords))
+                    all_extracted_patterns.extend(extracted_patterns)
+                    
+                    # Guardar hash si existe
+                    if file_hash:
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO learned_hashes (
+                                file_hash, is_hack, confirmed_count, last_confirmed_at, source_feedback_id
+                            ) VALUES (?, 1, 
+                                COALESCE((SELECT confirmed_count FROM learned_hashes WHERE file_hash = ?), 0) + 1,
+                                CURRENT_TIMESTAMP, ?
+                            )
+                        ''', (file_hash, file_hash, feedback_id))
+                    
+                    # Guardar patrones aprendidos
+                    if extracted_patterns:
+                        pattern_data = [(pattern, feedback_id, pattern) for pattern in extracted_patterns]
+                        cursor.executemany('''
+                            INSERT OR REPLACE INTO learned_patterns (
+                                pattern_type, pattern_value, pattern_category, source_feedback_id,
+                                learned_from_count, last_updated_at, is_active
+                            ) VALUES ('keyword', ?, 'high_risk', ?, 
+                                COALESCE((SELECT learned_from_count FROM learned_patterns WHERE pattern_value = ?), 0) + 1,
+                                CURRENT_TIMESTAMP, 1
+                            )
+                        ''', pattern_data)
+                    
+                    extracted_features = {
+                        'obfuscation': bool(obfuscation),
+                        'confidence': confidence or 0
+                    }
+                elif staff_verification == 'legitimate' and file_hash:
+                    # Si es legítimo, guardar hash en whitelist
+                    cursor.execute('''
+                        INSERT OR REPLACE INTO learned_hashes (
+                            file_hash, is_hack, confirmed_count, last_confirmed_at, source_feedback_id
+                        ) VALUES (?, 0, 
+                            COALESCE((SELECT confirmed_count FROM learned_hashes WHERE file_hash = ?), 0) + 1,
+                            CURRENT_TIMESTAMP, ?
+                        )
+                    ''', (file_hash, file_hash, feedback_id))
+                
+                # Actualizar feedback con características extraídas
+                cursor.execute('''
+                    UPDATE staff_feedback
+                    SET extracted_patterns = ?, extracted_features = ?
+                    WHERE id = ?
+                ''', (json.dumps(extracted_patterns), json.dumps(extracted_features), feedback_id))
+            
+            # Limpiar caché relacionado
+            for key in list(_stats_cache.keys()):
+                if key.startswith('scan_') or key in ['statistics', 'learned_patterns']:
+                    del _stats_cache[key]
+        
+        return jsonify({
+            'success': True,
+            'feedback_ids': feedback_ids,
+            'processed_count': len(feedback_ids),
+            'extracted_patterns': list(set(all_extracted_patterns)),
+            'message': f'Feedback masivo guardado: {len(feedback_ids)} resultados procesados'
+        }), 201
     except Exception as e:
         import traceback
-        return jsonify({'error': f'Error inesperado: {str(e)}', 'traceback': traceback.format_exc()}), 500
+        print(f"Error en submit_feedback_batch: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({'error': f'Error inesperado: {str(e)}'}), 500
 
 @app.route('/api/feedback/<int:result_id>', methods=['GET'])
 def get_feedback(result_id):
-    """Obtiene feedback de un resultado específico"""
+    """Obtiene feedback de un resultado específico - OPTIMIZADO: Acceso directo a BD"""
     try:
-        headers = {}
-        if API_KEY:
-            headers['X-API-Key'] = API_KEY
-        response = requests.get(
-            get_api_url(f'/api/feedback/{result_id}'),
-            headers=headers,
-            timeout=5
-        )
-        if response.status_code == 200:
-            return jsonify(response.json())
-        return jsonify({'error': 'Error al obtener feedback'}), 500
+        # Acceso directo a BD (SIN HTTP - MUCHO MÁS RÁPIDO)
+        with get_api_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT id, staff_verification, staff_notes, verified_by, verified_at,
+                       extracted_patterns, extracted_features
+                FROM staff_feedback
+                WHERE result_id = ?
+                ORDER BY verified_at DESC
+                LIMIT 1
+            ''', (result_id,))
+            
+            result = cursor.fetchone()
+            
+            if not result:
+                return jsonify({'feedback': None}), 200
+            
+            return jsonify({
+                'feedback': {
+                    'id': result[0],
+                    'verification': result[1],
+                    'notes': result[2],
+                    'verified_by': result[3],
+                    'verified_at': result[4],
+                    'extracted_patterns': json.loads(result[5]) if result[5] else [],
+                    'extracted_features': json.loads(result[6]) if result[6] else {}
+                }
+            }), 200
     except Exception as e:
+        import traceback
+        print(f"Error en get_feedback: {str(e)}")
+        print(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/update-model', methods=['POST'])
@@ -1859,30 +2065,335 @@ def download_file(filename):
         return jsonify({'error': f'Archivo no encontrado: {filename}'}), 404
 
 @app.route('/api/scans/<int:scan_id>/report-html', methods=['GET'])
-@require_api_key
+@login_required
 def get_scan_report_html(scan_id):
-    """Proxy para obtener reporte HTML de un escaneo"""
+    """Genera un reporte HTML descargable para un escaneo específico - OPTIMIZADO: Acceso directo a BD"""
+    from datetime import datetime
+    
     try:
-        headers = {}
-        if API_KEY:
-            headers['X-API-Key'] = API_KEY
-        response = requests.get(
-            get_api_url(f'/api/scans/{scan_id}/report-html'),
-            headers=headers,
-            timeout=30
-        )
-        if response.status_code == 200:
-            from flask import Response
-            return Response(
-                response.content,
-                mimetype='text/html',
-                headers=response.headers
-            )
-        else:
-            return jsonify({'error': 'Error al generar reporte'}), response.status_code
-    except requests.exceptions.ConnectionError:
-        return jsonify({'error': 'No se pudo conectar con la API. Asegúrate de que esté ejecutándose.'}), 500
+        # Acceso directo a BD (SIN HTTP - MUCHO MÁS RÁPIDO)
+        with get_api_db_cursor() as cursor:
+            # Obtener información del escaneo
+            cursor.execute('''
+                SELECT id, started_at, completed_at, status,
+                       total_files_scanned, issues_found, scan_duration, machine_id, machine_name
+                FROM scans
+                WHERE id = ?
+            ''', (scan_id,))
+            
+            row = cursor.fetchone()
+            if not row:
+                return jsonify({'error': 'Escaneo no encontrado'}), 404
+            
+            scan = {
+                'id': row[0],
+                'started_at': row[1],
+                'completed_at': row[2],
+                'status': row[3],
+                'total_files_scanned': row[4],
+                'issues_found': row[5],
+                'scan_duration': row[6],
+                'machine_id': row[7],
+                'machine_name': row[8]
+            }
+            
+            # Obtener resultados con feedback
+            cursor.execute('''
+                SELECT sr.id, sr.issue_type, sr.issue_name, sr.issue_path, sr.issue_category,
+                       sr.alert_level, sr.confidence, sr.detected_patterns, sr.obfuscation_detected,
+                       sr.file_hash, sr.ai_analysis, sr.ai_confidence,
+                       sf.staff_verification, sf.staff_notes, sf.verified_at
+                FROM scan_results sr
+                LEFT JOIN staff_feedback sf ON sr.id = sf.result_id
+                WHERE sr.scan_id = ?
+                ORDER BY 
+                    CASE sr.alert_level
+                        WHEN 'CRITICAL' THEN 1
+                        WHEN 'SOSPECHOSO' THEN 2
+                        WHEN 'POCO_SOSPECHOSO' THEN 3
+                        ELSE 4
+                    END,
+                    sr.confidence DESC
+            ''', (scan_id,))
+            
+            results = []
+            for r in cursor.fetchall():
+                results.append({
+                    'id': r[0],
+                    'issue_type': r[1],
+                    'issue_name': r[2],
+                    'issue_path': r[3],
+                    'issue_category': r[4],
+                    'alert_level': r[5],
+                    'confidence': r[6],
+                    'detected_patterns': json.loads(r[7]) if r[7] else [],
+                    'obfuscation_detected': bool(r[8]),
+                    'file_hash': r[9],
+                    'ai_analysis': r[10],
+                    'ai_confidence': r[11],
+                    'feedback': r[12],
+                    'feedback_notes': r[13],
+                    'feedback_date': r[14]
+                })
+        
+        # Generar HTML (mismo formato que la API)
+        html = f'''<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASPERS Projects - Reporte de Escaneo #{scan_id}</title>
+    <style>
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #0a0e27;
+            color: #f0f6fc;
+            line-height: 1.6;
+            padding: 2rem;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            background: #161b22;
+            border-radius: 12px;
+            padding: 2rem;
+            border: 1px solid #30363d;
+        }}
+        .header {{
+            border-bottom: 2px solid #1f6feb;
+            padding-bottom: 1.5rem;
+            margin-bottom: 2rem;
+        }}
+        .header h1 {{
+            color: #1f6feb;
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }}
+        .header p {{
+            color: #8b949e;
+            font-size: 0.9rem;
+        }}
+        .summary {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }}
+        .summary-card {{
+            background: #0d1117;
+            padding: 1.5rem;
+            border-radius: 8px;
+            border: 1px solid #30363d;
+        }}
+        .summary-card h3 {{
+            color: #8b949e;
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+        }}
+        .summary-card .value {{
+            color: #1f6feb;
+            font-size: 1.5rem;
+            font-weight: 600;
+        }}
+        .issue-card {{
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            border-left: 4px solid #30363d;
+        }}
+        .issue-card.critical {{
+            border-left-color: #f85149;
+        }}
+        .issue-card.suspicious {{
+            border-left-color: #d29922;
+        }}
+        .issue-card.low {{
+            border-left-color: #58a6ff;
+        }}
+        .issue-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 1rem;
+        }}
+        .issue-title {{
+            color: #f0f6fc;
+            font-size: 1.1rem;
+            margin-bottom: 0.25rem;
+        }}
+        .issue-path {{
+            color: #8b949e;
+            font-size: 0.875rem;
+            font-family: 'Consolas', monospace;
+        }}
+        .badge {{
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-left: 0.5rem;
+        }}
+        .badge-danger {{
+            background: #f85149;
+            color: #fff;
+        }}
+        .badge-warning {{
+            background: #d29922;
+            color: #fff;
+        }}
+        .badge-info {{
+            background: #58a6ff;
+            color: #fff;
+        }}
+        .badge-success {{
+            background: #238636;
+            color: #fff;
+        }}
+        .issue-details {{
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid #30363d;
+        }}
+        .issue-details div {{
+            margin-bottom: 0.5rem;
+            color: #c9d1d9;
+        }}
+        .issue-details strong {{
+            color: #8b949e;
+        }}
+        .issue-details code {{
+            background: #0d1117;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-family: 'Consolas', monospace;
+            font-size: 0.875rem;
+            color: #58a6ff;
+        }}
+        .feedback-section {{
+            margin-top: 1rem;
+            padding: 1rem;
+            background: #0d1117;
+            border-radius: 6px;
+            border: 1px solid #30363d;
+        }}
+        .feedback-section h4 {{
+            color: #8b949e;
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+        }}
+        .footer {{
+            margin-top: 3rem;
+            padding-top: 2rem;
+            border-top: 1px solid #30363d;
+            text-align: center;
+            color: #8b949e;
+            font-size: 0.875rem;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 ASPERS Projects - Reporte de Escaneo</h1>
+            <p>Generado el {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</p>
+        </div>
+        
+        <div class="summary">
+            <div class="summary-card">
+                <h3>Escaneo ID</h3>
+                <div class="value">#{scan['id']}</div>
+            </div>
+            <div class="summary-card">
+                <h3>Máquina</h3>
+                <div class="value">{scan['machine_name'] or 'N/A'}</div>
+            </div>
+            <div class="summary-card">
+                <h3>Archivos Escaneados</h3>
+                <div class="value">{scan['total_files_scanned'] or 0}</div>
+            </div>
+            <div class="summary-card">
+                <h3>Issues Detectados</h3>
+                <div class="value">{scan['issues_found'] or 0}</div>
+            </div>
+            <div class="summary-card">
+                <h3>Duración</h3>
+                <div class="value">{scan['scan_duration'] or 0:.1f}s</div>
+            </div>
+            <div class="summary-card">
+                <h3>Fecha</h3>
+                <div class="value">{scan['started_at'] or 'N/A'}</div>
+            </div>
+        </div>
+        
+        <h2 style="color: #1f6feb; margin-bottom: 1rem; margin-top: 2rem;">Issues Detectados</h2>
+'''
+        
+        # Agregar cada issue
+        for result in results:
+            alert_class = 'critical' if result['alert_level'] == 'CRITICAL' else ('suspicious' if result['alert_level'] == 'SOSPECHOSO' else 'low')
+            badge_class = 'danger' if result['alert_level'] == 'CRITICAL' else ('warning' if result['alert_level'] == 'SOSPECHOSO' else 'info')
+            
+            html += f'''
+        <div class="issue-card {alert_class}">
+            <div class="issue-header">
+                <div>
+                    <div class="issue-title">{result['issue_name'] or 'Issue Desconocido'}</div>
+                    <div class="issue-path">{result['issue_path'] or 'N/A'}</div>
+                </div>
+                <div>
+                    <span class="badge badge-{badge_class}">{result['alert_level'] or 'N/A'}</span>
+                    {f'<span class="badge badge-info">{result["confidence"]}%</span>' if result.get('confidence') else ''}
+                    {f'<span class="badge badge-success">✓ Verificado: {result["feedback"]}</span>' if result.get('feedback') else ''}
+                </div>
+            </div>
+            <div class="issue-details">
+                {f'<div><strong>Tipo:</strong> {result["issue_type"]}</div>' if result.get('issue_type') else ''}
+                {f'<div><strong>Categoría:</strong> {result["issue_category"]}</div>' if result.get('issue_category') else ''}
+                {f'<div><strong>Análisis IA:</strong> {result["ai_analysis"]}</div>' if result.get('ai_analysis') else ''}
+                {f'<div><strong>Confianza IA:</strong> {result["ai_confidence"]}%</div>' if result.get('ai_confidence') else ''}
+                {f'<div><strong>Patrones detectados:</strong> {", ".join(result["detected_patterns"])}</div>' if result.get('detected_patterns') and len(result['detected_patterns']) > 0 else ''}
+                {f'<div><strong>Hash:</strong> <code>{result["file_hash"]}</code></div>' if result.get('file_hash') else ''}
+                {f'<div><strong>Ofuscación detectada:</strong> {"Sí" if result["obfuscation_detected"] else "No"}</div>'}
+            </div>
+'''
+            
+            if result.get('feedback'):
+                html += f'''
+            <div class="feedback-section">
+                <h4>Feedback del Staff</h4>
+                <div><strong>Verificación:</strong> {result['feedback']}</div>
+                {f'<div><strong>Notas:</strong> {result["feedback_notes"]}</div>' if result.get('feedback_notes') else ''}
+                {f'<div><strong>Fecha:</strong> {result["feedback_date"]}</div>' if result.get('feedback_date') else ''}
+            </div>
+'''
+            
+            html += '</div>'
+        
+        html += f'''
+        <div class="footer">
+            <p>Reporte generado por ASPERS Projects - Sistema de Detección Avanzada</p>
+            <p>Este reporte puede ser compartido con el staff superior para revisión de archivos sospechosos.</p>
+        </div>
+    </div>
+</body>
+</html>
+'''
+        
+        return Response(html, mimetype='text/html', headers={
+            'Content-Disposition': f'attachment; filename=ASPERS_Report_Scan_{scan_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.html'
+        })
     except Exception as e:
+        import traceback
+        print(f"Error en get_scan_report_html: {str(e)}")
+        print(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/get-latest-exe', methods=['GET'])
