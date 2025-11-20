@@ -7,16 +7,26 @@
 let currentScanId = null;
 let currentResultId = null;
 
-// Inicialización
+// Inicialización - OPTIMIZADO: Cargar datos críticos primero, el resto en background
 document.addEventListener('DOMContentLoaded', function() {
     initializeNavigation();
-    loadDashboard();
-    loadTokens();
-    loadScans();
-    loadLearningStats();
     setupEventListeners();
     setupAdminListeners();
     setupCompanyListeners();
+    
+    // Cargar datos críticos primero
+    loadDashboard();
+    
+    // Cargar el resto en background (no bloquea la UI)
+    setTimeout(() => {
+        loadTokens();
+        loadScans();
+    }, 100);
+    
+    // Cargar estadísticas de aprendizaje en background (menos crítico)
+    setTimeout(() => {
+        loadLearningStats();
+    }, 500);
 });
 
 // ============================================================

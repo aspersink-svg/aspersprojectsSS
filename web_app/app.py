@@ -1496,35 +1496,159 @@ def update_model():
 
 @app.route('/api/learned-patterns', methods=['GET'])
 def get_learned_patterns():
-    """Obtiene patrones aprendidos"""
+    """Obtiene patrones aprendidos - OPTIMIZADO: Acceso directo a BD sin HTTP"""
+    import time
+    
+    # Caché (60 segundos TTL - los patrones no cambian tan frecuentemente)
+    cache_key = 'learned_patterns'
+    if cache_key in _stats_cache:
+        if time.time() - _stats_cache_time.get(cache_key, 0) < 60:
+            return jsonify(_stats_cache[cache_key]), 200
+    
     try:
-        headers = {}
-        if API_KEY:
-            headers['X-API-Key'] = API_KEY
-        response = requests.get(
-            get_api_url('/api/learned-patterns'),
-            headers=headers,
-            timeout=5
-        )
-        if response.status_code == 200:
-            return jsonify(response.json())
-        return jsonify({'error': 'Error al obtener patrones'}), 500
+        # Acceso directo a BD (SIN HTTP - MUCHO MÁS RÁPIDO)
+        with get_api_db_cursor() as cursor:
+            # Verificar si la tabla existe y tiene la columna is_active
+            try:
+                cursor.execute('''
+                    SELECT pattern_type, pattern_value, pattern_category, confidence,
+                           learned_from_count, first_learned_at, is_active
+                    FROM learned_patterns
+                    WHERE is_active = 1
+                    ORDER BY learned_from_count DESC, confidence DESC
+                ''')
+            except sqlite3.OperationalError:
+                # Si no tiene is_active, consultar sin ese filtro
+                try:
+                    cursor.execute('''
+                        SELECT pattern_type, pattern_value, pattern_category, confidence,
+                               learned_from_count, first_learned_at, 1 as is_active
+                        FROM learned_patterns
+                        ORDER BY learned_from_count DESC, confidence DESC
+                    ''')
+                except sqlite3.OperationalError:
+                    # Si la tabla no existe, retornar vacío
+                    result = {'patterns': [], 'total': 0}
+                    _stats_cache[cache_key] = result
+                    _stats_cache_time[cache_key] = time.time()
+                    return jsonify(result), 200
+            
+            patterns = []
+            for row in cursor.fetchall():
+                patterns.append({
+                    'type': row[0],
+                    'value': row[1],
+                    'category': row[2],
+                    'confidence': row[3],
+                    'learned_from_count': row[4],
+                    'first_learned_at': row[5],
+                    'is_active': bool(row[6])
+                })
+            
+            result = {'patterns': patterns, 'total': len(patterns)}
+            
+            # Guardar en caché
+            _stats_cache[cache_key] = result
+            _stats_cache_time[cache_key] = time.time()
+            
+            return jsonify(result), 200
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        import traceback
+        print(f"Error en get_learned_patterns: {str(e)}")
+        print(traceback.format_exc())
+        # Retornar respuesta vacía en lugar de error para no romper la app
+        return jsonify({'patterns': [], 'total': 0, 'error': str(e)}), 200
 
 @app.route('/api/ai-model/latest', methods=['GET'])
 def get_latest_ai_model():
-    """Obtiene el modelo de IA más reciente - SIN REQUERIR API KEY (para clientes)"""
+    """Obtiene el modelo de IA más reciente - OPTIMIZADO: Acceso directo a BD sin HTTP"""
+    import time
+    
+    # Caché (300 segundos TTL - el modelo no cambia tan frecuentemente)
+    cache_key = 'ai_model_latest'
+    if cache_key in _stats_cache:
+        if time.time() - _stats_cache_time.get(cache_key, 0) < 300:
+            return jsonify(_stats_cache[cache_key]), 200
+    
     try:
-        response = requests.get(
-            get_api_url('/api/ai-model/latest'),
-            timeout=5
-        )
-        if response.status_code == 200:
-            return jsonify(response.json())
-        return jsonify({'error': 'Error al obtener modelo'}), 500
+        # Acceso directo a BD (SIN HTTP - MUCHO MÁS RÁPIDO)
+        with get_api_db_cursor() as cursor:
+            # Obtener patrones aprendidos
+            try:
+                cursor.execute('''
+                    SELECT pattern_value, pattern_category, confidence, learned_from_count
+                    FROM learned_patterns
+                    WHERE is_active = 1
+                    ORDER BY learned_from_count DESC
+                ''')
+            except sqlite3.OperationalError:
+                cursor.execute('''
+                    SELECT pattern_value, pattern_category, confidence, learned_from_count
+                    FROM learned_patterns
+                    ORDER BY learned_from_count DESC
+                ''')
+            
+            patterns = {
+                'high_risk': [],
+                'medium_risk': [],
+                'low_risk': []
+            }
+            
+            for row in cursor.fetchall():
+                pattern_value, category, confidence, count = row
+                if category in patterns:
+                    patterns[category].append({
+                        'value': pattern_value,
+                        'confidence': confidence,
+                        'learned_from_count': count
+                    })
+            
+            # Obtener hashes aprendidos
+            try:
+                cursor.execute('''
+                    SELECT file_hash, is_hack, confirmed_count
+                    FROM learned_hashes
+                    WHERE is_hack = 1
+                    ORDER BY confirmed_count DESC
+                ''')
+            except sqlite3.OperationalError:
+                hashes = []
+            else:
+                hashes = []
+                for row in cursor.fetchall():
+                    hashes.append({
+                        'hash': row[0],
+                        'is_hack': bool(row[1]),
+                        'confirmed_count': row[2]
+                    })
+            
+            result = {
+                'version': '1.0.0',
+                'updated_at': None,
+                'patterns': patterns,
+                'hashes': hashes,
+                'patterns_count': sum(len(p) for p in patterns.values()),
+                'hashes_count': len(hashes)
+            }
+            
+            # Guardar en caché
+            _stats_cache[cache_key] = result
+            _stats_cache_time[cache_key] = time.time()
+            
+            return jsonify(result), 200
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        import traceback
+        print(f"Error en get_latest_ai_model: {str(e)}")
+        print(traceback.format_exc())
+        # Retornar modelo vacío en lugar de error
+        return jsonify({
+            'version': '1.0.0',
+            'updated_at': None,
+            'patterns': {'high_risk': [], 'medium_risk': [], 'low_risk': []},
+            'hashes': [],
+            'patterns_count': 0,
+            'hashes_count': 0
+        }), 200
 
 @app.route('/api/generate-app', methods=['POST'])
 @admin_required
