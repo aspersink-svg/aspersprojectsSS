@@ -1,7 +1,7 @@
 """
 Aplicación Web Flask para Panel del Staff de ASPERS Projects
 """
-from flask import Flask, render_template, request, jsonify, session, Response, redirect, url_for
+from flask import Flask, render_template, request, jsonify, session, Response, redirect, url_for, make_response
 from flask_cors import CORS
 import os
 import requests
@@ -22,13 +22,19 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'aspers-secret-key-change-in-production')
 CORS(app)
 
-# Inicializar base de datos de autenticación al iniciar
-try:
-    init_auth_db()
-    print("✅ Base de datos de autenticación inicializada correctamente")
-except Exception as e:
-    print(f"⚠️ Error al inicializar base de datos: {e}")
-    print("⚠️ La aplicación continuará, pero algunas funciones pueden no funcionar")
+# Inicializar base de datos de autenticación al iniciar (en background para no bloquear)
+def init_db_async():
+    """Inicializa la BD de forma asíncrona para no bloquear el inicio"""
+    try:
+        init_auth_db()
+        print("✅ Base de datos de autenticación inicializada correctamente")
+    except Exception as e:
+        print(f"⚠️ Error al inicializar base de datos: {e}")
+        print("⚠️ La aplicación continuará, pero algunas funciones pueden no funcionar")
+
+# Inicializar en un thread separado para no bloquear el inicio
+import threading
+threading.Thread(target=init_db_async, daemon=True).start()
 
 # Health check endpoints (simplificado - sin import externo)
 
@@ -86,17 +92,22 @@ def require_api_key(f):
 @app.route('/')
 def index():
     """Página principal - Sobre ASPERS"""
-    return render_template('index.html')
+    response = make_response(render_template('index.html'))
+    # Agregar headers de caché para recursos estáticos
+    response.headers['Cache-Control'] = 'public, max-age=300'  # 5 minutos
+    return response
 
 @app.route('/health', methods=['GET'])
 @app.route('/healthz', methods=['GET'])
+@app.route('/ping', methods=['GET'])
 def health_check():
-    """Health check endpoint para Render"""
-    return jsonify({
-        'status': 'ok',
-        'service': 'aspers-web-app',
-        'timestamp': datetime.datetime.now().isoformat()
-    }), 200
+    """Health check endpoint para Render - Optimizado para ser ultra-rápido"""
+    # Respuesta mínima y rápida para evitar spinning down
+    # Este endpoint se puede llamar periódicamente para mantener el servicio activo
+    response = make_response('OK', 200)
+    response.headers['Content-Type'] = 'text/plain'
+    response.headers['Cache-Control'] = 'no-cache'
+    return response
 
 @app.route('/diagnostico-login')
 def diagnostico_login():

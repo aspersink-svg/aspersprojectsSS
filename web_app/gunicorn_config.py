@@ -4,13 +4,13 @@ Configuración de Gunicorn para Render
 import multiprocessing
 import os
 
-# Número de workers (procesos)
-workers = multiprocessing.cpu_count() * 2 + 1
-workers = min(workers, 4)  # Máximo 4 workers en Render free tier
+# Número de workers (procesos) - Optimizado para Render free tier
+# Usar solo 1 worker para evitar problemas de memoria y mejorar tiempo de respuesta
+workers = 1  # Render free tier funciona mejor con 1 worker
 
-# Timeout (aumentado para evitar 502)
-timeout = 180  # 3 minutos
-keepalive = 5  # Mantener conexiones vivas
+# Timeout (reducido para respuestas más rápidas)
+timeout = 30  # 30 segundos es suficiente para la mayoría de requests
+keepalive = 2  # Mantener conexiones vivas por menos tiempo
 
 # Bind - Render asigna el puerto automáticamente en la variable PORT
 port = os.environ.get('PORT', '10000')
