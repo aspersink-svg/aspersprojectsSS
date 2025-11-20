@@ -483,23 +483,34 @@ def get_statistics():
             cursor.execute('SELECT COUNT(*) FROM scans WHERE status = "running"')
             active_scans = cursor.fetchone()[0]
             
-            # Total de usuarios
-            cursor.execute('SELECT COUNT(*) FROM users')
-            try:
-                total_users = cursor.fetchone()[0]
-            except sqlite3.OperationalError:
-                # Si la tabla users no existe, usar 0
-                total_users = 0
+            # Total de máquinas únicas
+            cursor.execute('SELECT COUNT(DISTINCT machine_id) FROM scans WHERE machine_id IS NOT NULL AND machine_id != ""')
+            unique_machines = cursor.fetchone()[0]
             
-            # Total de detecciones severas
+            # Total de detecciones severas (CRITICAL)
             cursor.execute('SELECT COUNT(*) FROM scan_results WHERE alert_level = "CRITICAL"')
             severe_detections = cursor.fetchone()[0]
+            
+            # Total de resultados
+            cursor.execute('SELECT COUNT(*) FROM scan_results')
+            total_results = cursor.fetchone()[0]
+            
+            # Total de tokens activos
+            cursor.execute('SELECT COUNT(*) FROM scan_tokens WHERE is_active = 1')
+            active_tokens = cursor.fetchone()[0]
+            
+            # Total de bans
+            cursor.execute('SELECT COUNT(*) FROM ban_history')
+            total_bans = cursor.fetchone()[0]
         
         return jsonify({
             'total_scans': total_scans,
             'active_scans': active_scans,
-            'total_users': total_users,
+            'unique_machines': unique_machines,
             'severe_detections': severe_detections,
+            'total_results': total_results,
+            'active_tokens': active_tokens,
+            'total_bans': total_bans,
             'timestamp': datetime.datetime.now().isoformat()
         }), 200
     except Exception as e:
