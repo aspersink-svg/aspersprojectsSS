@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Iniciar Sesión - ASPERS Projects</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        .login-container {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+            padding: 20px;
+        }
+        .login-card {
+            background: #1e2329;
+            border-radius: 16px;
+            padding: 40px;
+            width: 100%;
+            max-width: 420px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            border: 1px solid #30363d;
+        }
+        .login-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+        .login-header .brand-icon {
+            font-size: 48px;
+            display: block;
+            margin-bottom: 16px;
+        }
+        .login-header h1 {
+            color: #f0f6fc;
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .login-header p {
+            color: #8b949e;
+            font-size: 14px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-label {
+            display: block;
+            color: #f0f6fc;
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        .form-input {
+            width: 100%;
+            padding: 12px 16px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            color: #f0f6fc;
+            font-size: 14px;
+            transition: all 0.2s;
+            box-sizing: border-box;
+        }
+        .form-input:focus {
+            outline: none;
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.1);
+        }
+        .btn-login {
+            width: 100%;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #58a6ff 0%, #3d8bfd 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 8px;
+        }
+        .btn-login:hover {
+            background: linear-gradient(135deg, #3d8bfd 0%, #2d7ae8 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(88, 166, 255, 0.3);
+        }
+        .error-message {
+            background: #da3633;
+            color: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        .register-link {
+            text-align: center;
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid #30363d;
+        }
+        .register-link a {
+            color: #58a6ff;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .register-link a:hover {
+            text-decoration: underline;
+        }
+        .back-link {
+            text-align: center;
+            margin-top: 16px;
+        }
+        .back-link a {
+            color: #8b949e;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .back-link a:hover {
+            color: #f0f6fc;
+        }
+        .login-type-selector {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 24px;
+            background: #0d1117;
+            padding: 4px;
+            border-radius: 8px;
+            border: 1px solid #30363d;
+        }
+        .login-type-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 10px 16px;
+            background: transparent;
+            border: none;
+            border-radius: 6px;
+            color: #8b949e;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .login-type-btn:hover {
+            color: #f0f6fc;
+        }
+        .login-type-btn.active {
+            background: linear-gradient(135deg, #58a6ff 0%, #3d8bfd 100%);
+            color: white;
+        }
+        .login-form {
+            display: none;
+        }
+        .login-form.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="login-header">
+                <span class="brand-icon">🛡️</span>
+                <h1>ASPERS Projects</h1>
+                <p>Iniciar Sesión</p>
+            </div>
+
+            <!-- Selector de tipo de login -->
+            <div class="login-type-selector">
+                <button class="login-type-btn active" data-type="individual" onclick="switchLoginType('individual')">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <path d="M10 10C12.7614 10 15 7.76142 15 5C15 2.23858 12.7614 0 10 0C7.23858 0 5 2.23858 5 5C5 7.76142 7.23858 10 10 10Z" fill="currentColor"/>
+                        <path d="M10 12C5.58172 12 2 14.2386 2 17V20H18V17C18 14.2386 14.4183 12 10 12Z" fill="currentColor"/>
+                    </svg>
+                    <span>Cuenta Individual</span>
+                </button>
+                <button class="login-type-btn" data-type="empresa" onclick="switchLoginType('empresa')">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <path d="M2 4H18V16H2V4Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M6 8H14M6 12H10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    <span>Login Empresarial</span>
+                </button>
+            </div>
+
+            {% if error %}
+            <div class="error-message">
+                {{ error }}
+            </div>
+            {% endif %}
+
+            <!-- Formulario Individual -->
+            <form method="POST" action="/login" id="login-form-individual" class="login-form active">
+                <input type="hidden" name="login_type" value="individual">
+                <div class="form-group">
+                    <label class="form-label" for="username-individual">Usuario</label>
+                    <input 
+                        type="text" 
+                        id="username-individual" 
+                        name="username" 
+                        class="form-input" 
+                        placeholder="Ingresa tu usuario"
+                        required
+                        autofocus
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="password-individual">Contraseña</label>
+                    <input 
+                        type="password" 
+                        id="password-individual" 
+                        name="password" 
+                        class="form-input" 
+                        placeholder="Ingresa tu contraseña"
+                        required
+                    >
+                </div>
+
+                <button type="submit" class="btn-login">
+                    Iniciar Sesión Individual
+                </button>
+            </form>
+
+            <!-- Formulario Empresarial -->
+            <form method="POST" action="/login" id="login-form-empresa" class="login-form">
+                <input type="hidden" name="login_type" value="empresa">
+                <div class="form-group">
+                    <label class="form-label" for="username-empresa">Usuario Empresarial</label>
+                    <input 
+                        type="text" 
+                        id="username-empresa" 
+                        name="username" 
+                        class="form-input" 
+                        placeholder="Usuario de tu empresa"
+                        required
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="password-empresa">Contraseña</label>
+                    <input 
+                        type="password" 
+                        id="password-empresa" 
+                        name="password" 
+                        class="form-input" 
+                        placeholder="Contraseña empresarial"
+                        required
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="company-name-login">Nombre de la Empresa (opcional)</label>
+                    <input 
+                        type="text" 
+                        id="company-name-login" 
+                        name="company_name" 
+                        class="form-input" 
+                        placeholder="Nombre de tu empresa"
+                    >
+                </div>
+
+                <button type="submit" class="btn-login">
+                    Iniciar Sesión Empresarial
+                </button>
+            </form>
+
+            <div class="register-link">
+                <p style="color: #8b949e; margin-bottom: 8px;">¿No tienes cuenta?</p>
+                <a href="/register">Registrarse con token</a>
+            </div>
+
+            <div class="back-link">
+                <a href="/">← Volver al inicio</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function switchLoginType(type) {
+            // Actualizar botones
+            document.querySelectorAll('.login-type-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.querySelector(`[data-type="${type}"]`).classList.add('active');
+            
+            // Mostrar/ocultar formularios
+            document.querySelectorAll('.login-form').forEach(form => {
+                form.classList.remove('active');
+            });
+            
+            if (type === 'individual') {
+                document.getElementById('login-form-individual').classList.add('active');
+                document.getElementById('username-individual').focus();
+            } else {
+                document.getElementById('login-form-empresa').classList.add('active');
+                document.getElementById('username-empresa').focus();
+            }
+        }
+    </script>
+</body>
+</html>
+
+

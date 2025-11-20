@@ -1,0 +1,13 @@
+{
+    "discord_webhook": "",
+    "auth_token": "",
+    "scan_timeout": 300,
+    "api_url": "http://localhost:5000",
+    "scan_token": "",
+    "web_url": "http://localhost:8080",
+    "enable_db_integration": true,
+    "enable_ai_analysis": true,
+    "enable_discord_report": true,
+    "enable_web_report": true
+}
+
