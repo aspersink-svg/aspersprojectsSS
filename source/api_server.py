@@ -441,6 +441,74 @@ def validate_scan_token(token):
         return None, f"Error validando token: {str(e)}"
 
 # ============================================================
+# HEALTH CHECK Y ENDPOINTS BÁSICOS
+# ============================================================
+
+@app.route('/')
+def root():
+    """Endpoint raíz - verifica que la API funciona"""
+    return jsonify({
+        'status': 'ok',
+        'service': 'aspers-api',
+        'version': '1.0',
+        'message': 'API is running',
+        'endpoints': [
+            '/health',
+            '/api/statistics',
+            '/api/scans'
+        ]
+    }), 200
+
+@app.route('/health')
+@app.route('/healthz')
+def health_check():
+    """Health check para Render"""
+    return jsonify({
+        'status': 'ok',
+        'service': 'aspers-api',
+        'timestamp': datetime.datetime.now().isoformat()
+    }), 200
+
+@app.route('/api/statistics', methods=['GET'])
+def get_statistics():
+    """Obtiene estadísticas del sistema"""
+    try:
+        # Obtener estadísticas de la base de datos
+        with get_db_cursor() as cursor:
+            # Total de escaneos
+            cursor.execute('SELECT COUNT(*) FROM scans')
+            total_scans = cursor.fetchone()[0]
+            
+            # Escaneos activos
+            cursor.execute('SELECT COUNT(*) FROM scans WHERE status = "running"')
+            active_scans = cursor.fetchone()[0]
+            
+            # Total de usuarios
+            cursor.execute('SELECT COUNT(*) FROM users')
+            try:
+                total_users = cursor.fetchone()[0]
+            except sqlite3.OperationalError:
+                # Si la tabla users no existe, usar 0
+                total_users = 0
+            
+            # Total de detecciones severas
+            cursor.execute('SELECT COUNT(*) FROM scan_results WHERE alert_level = "CRITICAL"')
+            severe_detections = cursor.fetchone()[0]
+        
+        return jsonify({
+            'total_scans': total_scans,
+            'active_scans': active_scans,
+            'total_users': total_users,
+            'severe_detections': severe_detections,
+            'timestamp': datetime.datetime.now().isoformat()
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'status': 'error'
+        }), 500
+
+# ============================================================
 # ENDPOINTS DE TOKENS
 # ============================================================
 
