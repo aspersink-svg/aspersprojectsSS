@@ -1083,23 +1083,23 @@ def list_tokens():
                             ORDER BY created_at DESC
                             LIMIT 100
                         ''', (username,))
-            
-            tokens = []
-            for row in cursor.fetchall():
-                tokens.append({
-                    'id': row[0],
-                    'token': row[1],
-                    'created_at': row[2],
-                    'expires_at': row[3],
-                    'used_count': row[4],
-                    'max_uses': row[5],
-                    'is_active': bool(row[6]),
-                    'created_by': row[7],
-                    'description': row[8],
-                    'type': 'scan_token'  # Indicar que es un token de escaneo
-                })
+                    
+                    tokens = []
+                    for row in cursor.fetchall():
+                        tokens.append({
+                            'id': row[0],
+                            'token': row[1],
+                            'created_at': row[2],
+                            'expires_at': row[3],
+                            'used_count': row[4],
+                            'max_uses': row[5],
+                            'is_active': bool(row[6]),
+                            'created_by': row[7],
+                            'description': row[8],
+                            'type': 'scan_token'  # Indicar que es un token de escaneo
+                        })
                 
-    return jsonify({'success': True, 'tokens': tokens})
+                return jsonify({'success': True, 'tokens': tokens})
             except Exception as e:
                 print(f"Error accediendo BD local, usando HTTP: {str(e)}")
                 # Continuar con HTTP si falla acceso local
