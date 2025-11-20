@@ -1154,8 +1154,12 @@ def create_token():
         
         created_by = user.get('username', 'web_app')
         
-        # Intentar crear directamente en BD si está disponible localmente
-        if API_DB_AVAILABLE_LOCALLY:
+        # En Render, SIEMPRE usar HTTP porque la BD está en otro servicio
+        # Solo usar BD local si estamos en desarrollo y la BD está disponible
+        use_http = IS_RENDER or not API_DB_AVAILABLE_LOCALLY
+        
+        if not use_http and API_DB_AVAILABLE_LOCALLY:
+            # Solo en desarrollo local con BD disponible
             try:
                 # Crear token de ESCANEO directamente en la BD de la API (scan_tokens)
                 # NOTA: Este es un token de ESCANEO, NO de registro de usuarios
@@ -1173,6 +1177,7 @@ def create_token():
                     
                     token_id = cursor.lastrowid
                 
+                print(f"✅ Token creado localmente: ID={token_id}")
                 return jsonify({
                     'success': True,
                     'token': token,
@@ -1184,12 +1189,13 @@ def create_token():
                     'type': 'scan_token'  # Indicar que es un token de escaneo (NO de registro)
                 }), 201
             except Exception as e:
-                print(f"Error accediendo BD local, usando HTTP: {str(e)}")
-                # Continuar con HTTP si falla acceso local
+                print(f"⚠️ Error accediendo BD local, usando HTTP: {str(e)}")
+                use_http = True  # Forzar HTTP si falla
         
-        # Si no está disponible localmente (Render con servicios separados), usar HTTP
-        api_url_full = get_api_url('/api/tokens')
-        print(f"🌐 Creando token vía HTTP en: {api_url_full}")
+        # Usar HTTP (Render o si falló BD local)
+        if use_http:
+            api_url_full = get_api_url('/api/tokens')
+            print(f"🌐 Creando token vía HTTP en: {api_url_full}")
         
         headers = {}
         if API_KEY:
@@ -1242,6 +1248,9 @@ def create_token():
         except requests.exceptions.ConnectionError as e:
             print(f"🔌 Error de conexión: {str(e)}")
             return jsonify({'success': False, 'error': f'No se pudo conectar con la API: {str(e)}'}), 503
+        else:
+            # Si no se usó HTTP y tampoco BD local, error
+            return jsonify({'success': False, 'error': 'No se pudo crear token: BD no disponible y HTTP no configurado'}), 500
             
     except Exception as e:
         import traceback

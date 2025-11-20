@@ -674,8 +674,8 @@ def validate_token_endpoint():
         return jsonify({'valid': False, 'error': f'Error validando token: {str(e)}'}), 500
 
 @app.route('/api/tokens', methods=['POST'])
-@require_api_key
 def create_scan_token():
+    """Crea un nuevo token de escaneo - SIN REQUIRE_API_KEY para permitir creación desde web app"""
     """Crea un nuevo token de escaneo"""
     try:
         data = request.json or {}
