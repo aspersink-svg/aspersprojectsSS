@@ -610,25 +610,68 @@ def get_statistics():
 # ENDPOINTS DE TOKENS
 # ============================================================
 
+@app.route('/api/debug/tokens', methods=['GET'])
+def debug_list_tokens():
+    """Endpoint de debug para listar tokens (sin autenticación, solo para diagnóstico)"""
+    try:
+        with get_db_cursor() as cursor:
+            cursor.execute('SELECT COUNT(*) FROM scan_tokens')
+            total = cursor.fetchone()[0]
+            
+            cursor.execute('''
+                SELECT id, token, created_at, is_active, created_by
+                FROM scan_tokens
+                ORDER BY created_at DESC
+                LIMIT 10
+            ''')
+            
+            tokens = []
+            for row in cursor.fetchall():
+                tokens.append({
+                    'id': row[0],
+                    'token_preview': row[1][:30] + '...' if len(row[1]) > 30 else row[1],
+                    'created_at': row[2],
+                    'is_active': bool(row[3]),
+                    'created_by': row[4]
+                })
+            
+            return jsonify({
+                'total_tokens': total,
+                'recent_tokens': tokens
+            }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/validate-token', methods=['POST'])
 def validate_token_endpoint():
     """Endpoint público para validar tokens de escaneo (usado por el cliente)"""
-    data = request.json
-    token = data.get('token', '').strip()
-    
-    if not token:
-        return jsonify({'valid': False, 'error': 'Token no proporcionado'}), 400
-    
-    token_id, error = validate_scan_token(token)
-    
-    if error:
-        return jsonify({'valid': False, 'error': error}), 200
-    
-    return jsonify({
-        'valid': True,
-        'token_id': token_id,
-        'message': 'Token válido'
-    }), 200
+    try:
+        data = request.json or {}
+        token = data.get('token', '').strip()
+        
+        if not token:
+            print("❌ Validación: Token no proporcionado")
+            return jsonify({'valid': False, 'error': 'Token no proporcionado'}), 400
+        
+        print(f"🔍 Validando token recibido: {token[:30]}... (longitud: {len(token)})")
+        
+        token_id, error = validate_scan_token(token)
+        
+        if error:
+            print(f"❌ Token inválido: {error}")
+            return jsonify({'valid': False, 'error': error}), 200
+        
+        print(f"✅ Token válido: ID={token_id}")
+        return jsonify({
+            'valid': True,
+            'token_id': token_id,
+            'message': 'Token válido'
+        }), 200
+    except Exception as e:
+        print(f"❌ Error en validate_token_endpoint: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'valid': False, 'error': f'Error validando token: {str(e)}'}), 500
 
 @app.route('/api/tokens', methods=['POST'])
 @require_api_key
@@ -712,6 +755,13 @@ def list_tokens():
     
     try:
         with get_db_cursor() as cursor:
+            # Verificar que la tabla existe
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scan_tokens'")
+            table_exists = cursor.fetchone()
+            if not table_exists:
+                print("⚠️ Tabla scan_tokens no existe, inicializando BD...")
+                init_db()
+            
             cursor.execute('''
                 SELECT id, token, created_at, expires_at, used_count, max_uses, 
                        is_active, created_by, description
@@ -734,10 +784,14 @@ def list_tokens():
                     'description': row[8]
                 })
             
-            result = {'tokens': tokens}
+            print(f"📋 Listando tokens: {len(tokens)} tokens encontrados")
+            result = {'tokens': tokens, 'count': len(tokens)}
             set_cached(cache_key, result)
             return jsonify(result)
     except Exception as e:
+        print(f"❌ Error listando tokens: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/tokens/<int:token_id>', methods=['DELETE'])
