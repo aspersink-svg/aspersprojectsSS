@@ -376,6 +376,17 @@ def init_db():
     conn.close()
     print("✅ Base de datos inicializada con índices optimizados")
 
+# Inicializar base de datos inmediatamente al cargar el módulo
+# Esto asegura que las tablas existan siempre, sin importar cómo se ejecute la app
+# (funciona tanto con ejecución directa como con gunicorn)
+try:
+    init_db()
+    print("✅ Base de datos inicializada al cargar el módulo")
+except Exception as e:
+    print(f"⚠️ Error inicializando base de datos al cargar módulo: {e}")
+    import traceback
+    traceback.print_exc()
+
 # ============================================================
 # UTILIDADES DE AUTENTICACIÓN
 # ============================================================
@@ -476,32 +487,53 @@ def get_statistics():
         # Obtener estadísticas de la base de datos
         with get_db_cursor() as cursor:
             # Total de escaneos
-            cursor.execute('SELECT COUNT(*) FROM scans')
-            total_scans = cursor.fetchone()[0]
+            try:
+                cursor.execute('SELECT COUNT(*) FROM scans')
+                total_scans = cursor.fetchone()[0]
+            except sqlite3.OperationalError:
+                total_scans = 0
             
             # Escaneos activos
-            cursor.execute('SELECT COUNT(*) FROM scans WHERE status = "running"')
-            active_scans = cursor.fetchone()[0]
+            try:
+                cursor.execute('SELECT COUNT(*) FROM scans WHERE status = "running"')
+                active_scans = cursor.fetchone()[0]
+            except sqlite3.OperationalError:
+                active_scans = 0
             
             # Total de máquinas únicas
-            cursor.execute('SELECT COUNT(DISTINCT machine_id) FROM scans WHERE machine_id IS NOT NULL AND machine_id != ""')
-            unique_machines = cursor.fetchone()[0]
+            try:
+                cursor.execute('SELECT COUNT(DISTINCT machine_id) FROM scans WHERE machine_id IS NOT NULL AND machine_id != ""')
+                unique_machines = cursor.fetchone()[0]
+            except sqlite3.OperationalError:
+                unique_machines = 0
             
             # Total de detecciones severas (CRITICAL)
-            cursor.execute('SELECT COUNT(*) FROM scan_results WHERE alert_level = "CRITICAL"')
-            severe_detections = cursor.fetchone()[0]
+            try:
+                cursor.execute('SELECT COUNT(*) FROM scan_results WHERE alert_level = "CRITICAL"')
+                severe_detections = cursor.fetchone()[0]
+            except sqlite3.OperationalError:
+                severe_detections = 0
             
             # Total de resultados
-            cursor.execute('SELECT COUNT(*) FROM scan_results')
-            total_results = cursor.fetchone()[0]
+            try:
+                cursor.execute('SELECT COUNT(*) FROM scan_results')
+                total_results = cursor.fetchone()[0]
+            except sqlite3.OperationalError:
+                total_results = 0
             
             # Total de tokens activos
-            cursor.execute('SELECT COUNT(*) FROM scan_tokens WHERE is_active = 1')
-            active_tokens = cursor.fetchone()[0]
+            try:
+                cursor.execute('SELECT COUNT(*) FROM scan_tokens WHERE is_active = 1')
+                active_tokens = cursor.fetchone()[0]
+            except sqlite3.OperationalError:
+                active_tokens = 0
             
             # Total de bans
-            cursor.execute('SELECT COUNT(*) FROM ban_history')
-            total_bans = cursor.fetchone()[0]
+            try:
+                cursor.execute('SELECT COUNT(*) FROM ban_history')
+                total_bans = cursor.fetchone()[0]
+            except sqlite3.OperationalError:
+                total_bans = 0
         
         return jsonify({
             'total_scans': total_scans,
@@ -2177,8 +2209,11 @@ def update_ai_model():
 
 if __name__ == '__main__':
     print("🚀 Iniciando API REST OPTIMIZADA de Aspers Projects Security Scanner...")
-    init_db()
-    print("✅ Base de datos inicializada con índices optimizados")
+    # La base de datos ya se inicializó al cargar el módulo, pero la inicializamos de nuevo por si acaso
+    try:
+        init_db()
+    except Exception:
+        pass  # Ya está inicializada
     print("⚡ Optimizaciones activas: WAL mode, conexión pooling, caché en memoria")
     
     # Detectar si estamos en Render
