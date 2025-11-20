@@ -26,12 +26,12 @@ CORS(app)
 # Inicializar base de datos de autenticación al iniciar (en background para no bloquear)
 def init_db_async():
     """Inicializa la BD de forma asíncrona para no bloquear el inicio"""
-    try:
-        init_auth_db()
-        print("✅ Base de datos de autenticación inicializada correctamente")
-    except Exception as e:
-        print(f"⚠️ Error al inicializar base de datos: {e}")
-        print("⚠️ La aplicación continuará, pero algunas funciones pueden no funcionar")
+try:
+    init_auth_db()
+    print("✅ Base de datos de autenticación inicializada correctamente")
+except Exception as e:
+    print(f"⚠️ Error al inicializar base de datos: {e}")
+    print("⚠️ La aplicación continuará, pero algunas funciones pueden no funcionar")
 
 # Inicializar en un thread separado para no bloquear el inicio
 import threading
@@ -389,12 +389,23 @@ import sqlite3
 from contextlib import contextmanager
 
 # Usar la misma base de datos que la API
-API_DATABASE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'source', 'scanner_db.sqlite')
+# En desarrollo local: source/scanner_db.sqlite
+# En Render: puede estar en otro servicio, usar variable de entorno o HTTP
+API_DATABASE_PATH = os.environ.get('API_DATABASE_PATH')
+if not API_DATABASE_PATH:
+    # Intentar ruta relativa (desarrollo local)
+    API_DATABASE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'source', 'scanner_db.sqlite')
+
+# Verificar si la base de datos existe localmente
+API_DB_AVAILABLE_LOCALLY = os.path.exists(API_DATABASE_PATH) if API_DATABASE_PATH else False
 
 @contextmanager
 def get_api_db_cursor():
-    """Context manager para operaciones de base de datos de la API - SIN HTTP"""
-    conn = sqlite3.connect(API_DATABASE, check_same_thread=False, timeout=5.0)
+    """Context manager para operaciones de base de datos de la API - SIN HTTP si está disponible localmente"""
+    if not API_DB_AVAILABLE_LOCALLY:
+        raise FileNotFoundError(f"Base de datos de API no disponible localmente en {API_DATABASE_PATH}. Usa HTTP para crear tokens.")
+    
+    conn = sqlite3.connect(API_DATABASE_PATH, check_same_thread=False, timeout=5.0)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     try:
@@ -1047,12 +1058,15 @@ def list_tokens():
             return jsonify({'success': False, 'error': 'Usuario no encontrado'}), 401
         
         username = user.get('username', '')
-        is_admin = is_admin(user)
+        is_admin_user = is_admin(user)
         
-        # Listar tokens de ESCANEO desde la BD de la API (scan_tokens)
-        with get_api_db_cursor() as cursor:
-            # Si es admin, mostrar todos los tokens. Si no, solo los del usuario
-            if is_admin:
+        # Intentar acceso directo a BD si está disponible localmente
+        if API_DB_AVAILABLE_LOCALLY:
+            try:
+                # Listar tokens de ESCANEO desde la BD de la API (scan_tokens)
+                with get_api_db_cursor() as cursor:
+                    # Si es admin, mostrar todos los tokens. Si no, solo los del usuario
+                    if is_admin_user:
                 cursor.execute('''
                     SELECT id, token, created_at, expires_at, used_count, max_uses, 
                            is_active, created_by, description
@@ -1084,8 +1098,36 @@ def list_tokens():
                     'description': row[8],
                     'type': 'scan_token'  # Indicar que es un token de escaneo
                 })
+                
+    return jsonify({'success': True, 'tokens': tokens})
+            except Exception as e:
+                print(f"Error accediendo BD local, usando HTTP: {str(e)}")
+                # Continuar con HTTP si falla acceso local
         
-        return jsonify({'success': True, 'tokens': tokens})
+        # Si no está disponible localmente (Render con servicios separados), usar HTTP
+        headers = {}
+        if API_KEY:
+            headers['X-API-Key'] = API_KEY
+        
+        response = requests.get(
+            get_api_url('/api/tokens'),
+            headers=headers,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            tokens = data.get('tokens', [])
+            
+            # Filtrar por usuario si no es admin
+            if not is_admin_user:
+                tokens = [t for t in tokens if t.get('created_by') == username]
+            
+            return jsonify({'success': True, 'tokens': tokens})
+        else:
+            error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {'error': response.text}
+            return jsonify({'success': False, 'error': error_data.get('error', f'Error {response.status_code}')}), response.status_code
+            
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -1112,33 +1154,73 @@ def create_token():
         
         created_by = user.get('username', 'web_app')
         
-        # Crear token de ESCANEO directamente en la BD de la API (scan_tokens)
-        # NOTA: Este es un token de ESCANEO, NO de registro de usuarios
-        # Los tokens de registro están en /api/admin/registration-tokens o /api/company/registration-tokens
-        token = secrets.token_urlsafe(32)
-        expires_at = None
-        if expires_days > 0:
-            expires_at = (datetime.datetime.now() + datetime.timedelta(days=expires_days)).isoformat()
+        # Intentar crear directamente en BD si está disponible localmente
+        if API_DB_AVAILABLE_LOCALLY:
+            try:
+                # Crear token de ESCANEO directamente en la BD de la API (scan_tokens)
+                # NOTA: Este es un token de ESCANEO, NO de registro de usuarios
+                token = secrets.token_urlsafe(32)
+                expires_at = None
+                if expires_days > 0:
+                    expires_at = (datetime.datetime.now() + datetime.timedelta(days=expires_days)).isoformat()
+                
+                # Insertar directamente en scan_tokens (tabla de la API)
+                with get_api_db_cursor() as cursor:
+                    cursor.execute('''
+                        INSERT INTO scan_tokens (token, expires_at, max_uses, description, created_by)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (token, expires_at, max_uses, description, created_by))
+                    
+                    token_id = cursor.lastrowid
+                
+            return jsonify({
+                'success': True,
+                    'token': token,
+                    'token_id': token_id,
+                    'expires_at': expires_at,
+                    'max_uses': max_uses,
+                    'description': description,
+                    'created_by': created_by,
+                    'type': 'scan_token'  # Indicar que es un token de escaneo (NO de registro)
+                }), 201
+            except Exception as e:
+                print(f"Error accediendo BD local, usando HTTP: {str(e)}")
+                # Continuar con HTTP si falla acceso local
         
-        # Insertar directamente en scan_tokens (tabla de la API)
-        with get_api_db_cursor() as cursor:
-            cursor.execute('''
-                INSERT INTO scan_tokens (token, expires_at, max_uses, description, created_by)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (token, expires_at, max_uses, description, created_by))
+        # Si no está disponible localmente (Render con servicios separados), usar HTTP
+        headers = {}
+        if API_KEY:
+            headers['X-API-Key'] = API_KEY
+        
+        # Crear token a través de la API HTTP
+        response = requests.post(
+            get_api_url('/api/tokens'),
+            json={
+                'expires_days': expires_days,
+                'max_uses': max_uses,
+                'description': description,
+                'created_by': created_by
+            },
+            headers=headers,
+            timeout=10
+        )
+        
+        if response.status_code == 201:
+            data = response.json()
+            return jsonify({
+                'success': True,
+                'token': data.get('token'),
+                'token_id': data.get('token_id'),
+                'expires_at': data.get('expires_at'),
+                'max_uses': max_uses,
+                'description': description,
+                'created_by': created_by,
+                'type': 'scan_token'
+            }), 201
+        else:
+            error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {'error': response.text}
+            return jsonify({'success': False, 'error': error_data.get('error', f'Error {response.status_code}')}), response.status_code
             
-            token_id = cursor.lastrowid
-        
-        return jsonify({
-            'success': True,
-            'token': token,
-            'token_id': token_id,
-            'expires_at': expires_at,
-            'max_uses': max_uses,
-            'description': description,
-            'created_by': created_by,
-            'type': 'scan_token'  # Indicar que es un token de escaneo (NO de registro)
-        }), 201
     except Exception as e:
         import traceback
         error_msg = f'Error inesperado al crear token de escaneo: {str(e)}'
@@ -1164,8 +1246,8 @@ def delete_token(token_id):
             cursor.execute('SELECT id, created_by FROM scan_tokens WHERE id = ?', (token_id,))
             token_row = cursor.fetchone()
             if not token_row:
-                return jsonify({'success': False, 'error': 'Token no encontrado'}), 404
-            
+            return jsonify({'success': False, 'error': 'Token no encontrado'}), 404
+        
             token_creator = token_row[1]
             
             # Verificar permisos: solo el creador o un admin puede eliminar
@@ -1187,8 +1269,8 @@ def list_scans():
     """Lista escaneos - OPTIMIZADO: Acceso directo a BD sin HTTP"""
     import time
     
-    limit = request.args.get('limit', 50, type=int)
-    offset = request.args.get('offset', 0, type=int)
+        limit = request.args.get('limit', 50, type=int)
+        offset = request.args.get('offset', 0, type=int)
     
     # Caché por limit/offset (10 segundos TTL)
     cache_key = f'scans_list_{limit}_{offset}'
@@ -1249,7 +1331,7 @@ def list_scans():
                         severity_map[scan_id] = {'summary': 'POCO_SOSPECHOSO', 'badge': 'info'}
                     elif total == 0:
                         severity_map[scan_id] = {'summary': 'LIMPIO', 'badge': 'success'}
-                    else:
+        else:
                         severity_map[scan_id] = {'summary': 'NORMAL', 'badge': 'secondary'}
                 
                 # Agregar preview a cada scan
@@ -1257,7 +1339,7 @@ def list_scans():
                     if scan['id'] in severity_map:
                         scan['severity_summary'] = severity_map[scan['id']]['summary']
                         scan['severity_badge'] = severity_map[scan['id']]['badge']
-                    else:
+        else:
                         scan['severity_summary'] = 'LIMPIO' if scan['issues_found'] == 0 else 'SOSPECHOSO'
                         scan['severity_badge'] = 'success' if scan['issues_found'] == 0 else 'warning'
             
@@ -1611,7 +1693,7 @@ def submit_feedback_batch():
                 if key.startswith('scan_') or key in ['statistics', 'learned_patterns']:
                     del _stats_cache[key]
         
-        return jsonify({
+            return jsonify({
             'success': True,
             'feedback_ids': feedback_ids,
             'processed_count': len(feedback_ids),
