@@ -634,23 +634,33 @@ def validate_token_endpoint():
 @require_api_key
 def create_scan_token():
     """Crea un nuevo token de escaneo"""
-    data = request.json
-    
-    # Generar token único
-    token = secrets.token_urlsafe(32)
-    
-    # Configuración del token
-    expires_days = data.get('expires_days', 30)
-    max_uses = data.get('max_uses', -1)  # -1 = ilimitado
-    description = data.get('description', '')
-    created_by = data.get('created_by', 'web_app')
-    
-    expires_at = None
-    if expires_days > 0:
-        expires_at = (datetime.datetime.now() + datetime.timedelta(days=expires_days)).isoformat()
-    
     try:
+        data = request.json or {}
+        print(f"📥 Creando token. Datos recibidos: expires_days={data.get('expires_days')}, max_uses={data.get('max_uses')}, created_by={data.get('created_by')}")
+        
+        # Generar token único
+        token = secrets.token_urlsafe(32)
+        
+        # Configuración del token
+        expires_days = data.get('expires_days', 30)
+        max_uses = data.get('max_uses', -1)  # -1 = ilimitado
+        description = data.get('description', '')
+        created_by = data.get('created_by', 'web_app')
+        
+        expires_at = None
+        if expires_days > 0:
+            expires_at = (datetime.datetime.now() + datetime.timedelta(days=expires_days)).isoformat()
+        
+        print(f"🔑 Token generado: {token[:30]}... (longitud: {len(token)})")
+        
         with get_db_cursor() as cursor:
+            # Verificar que la tabla existe
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scan_tokens'")
+            table_exists = cursor.fetchone()
+            if not table_exists:
+                print("⚠️ Tabla scan_tokens no existe, inicializando BD...")
+                init_db()
+            
             cursor.execute('''
                 INSERT INTO scan_tokens (token, expires_at, max_uses, description, created_by)
                 VALUES (?, ?, ?, ?, ?)
@@ -658,9 +668,23 @@ def create_scan_token():
             
             token_id = cursor.lastrowid
             
-            # Limpiar caché relacionado
+            # Verificar que se guardó correctamente
+            cursor.execute('SELECT token FROM scan_tokens WHERE id = ?', (token_id,))
+            saved_token = cursor.fetchone()
+            if saved_token:
+                print(f"✅ Token guardado correctamente en BD: ID={token_id}, Token guardado={saved_token[0][:30]}...")
+            else:
+                print(f"❌ ERROR: Token no se encontró después de guardar!")
+            
+            # Contar total de tokens
+            cursor.execute('SELECT COUNT(*) FROM scan_tokens')
+            total_tokens = cursor.fetchone()[0]
+            print(f"📊 Total de tokens en BD: {total_tokens}")
+            
+            # Limpiar caché relacionado (importante para que la validación funcione)
             clear_cache('tokens')
             clear_cache('token_')
+            print(f"🧹 Caché limpiado")
             
             print(f"✅ Token creado exitosamente: ID={token_id}, Token={token[:30]}..., Creado por={created_by}")
             
@@ -672,6 +696,9 @@ def create_scan_token():
                 'max_uses': max_uses
             }), 201
     except Exception as e:
+        print(f"❌ Error creando token: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/tokens', methods=['GET'])
