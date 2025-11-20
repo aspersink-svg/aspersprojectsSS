@@ -28,16 +28,18 @@ Asegúrate de que estos archivos estén en la carpeta `source/`:
 - **Name:** `aspers-api` (o el nombre que prefieras)
 - **Region:** Elige la más cercana a tus usuarios
 - **Branch:** `main` (o la rama que uses)
-- **Root Directory:** `source` ⚠️ **IMPORTANTE: Debe ser `source`**
+- **Root Directory:** `source` ⚠️ **IMPORTANTE: Debe ser `source` (sin barra inicial, sin punto)**
 - **Runtime:** `Python 3`
 - **Build Command:** 
   ```bash
   pip install -r requirements.txt
   ```
+  ⚠️ **NO uses `cd source &&` si Root Directory = `source`**
 - **Start Command:**
   ```bash
   gunicorn api_server:app --config gunicorn_config.py
   ```
+  ⚠️ **NO uses `cd source &&` si Root Directory = `source`**
 
 #### Plan:
 - **Free:** Para empezar (se apaga después de inactividad)
