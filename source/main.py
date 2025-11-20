@@ -4490,103 +4490,141 @@ class MinecraftSSApp:
                     print(f"🔍 Validando token contra API: {api_url}")
                     print(f"🔍 Token recibido (primeros 20 chars): {token[:20]}...")
                     
-                    # Validar token contra la API
-                    try:
-                        response = requests.post(
-                            f"{api_url}/api/validate-token",
-                            json={'token': token},
-                            timeout=10
-                        )
-                        
-                        print(f"📡 Respuesta de API: Status {response.status_code}")
-                        
-                        if response.status_code == 200:
-                            data = response.json()
-                            print(f"📡 Datos de respuesta: {data}")
+                    # Validar token contra la API con reintentos (Render puede estar "despertando")
+                    import time
+                    max_retries = 3
+                    retry_delay = 2  # segundos
+                    timeout = 30  # Aumentado a 30 segundos para Render
+                    
+                    for attempt in range(max_retries):
+                        try:
+                            if attempt > 0:
+                                print(f"🔄 Reintentando validación de token (intento {attempt + 1}/{max_retries})...")
+                                time.sleep(retry_delay * attempt)  # Backoff exponencial
                             
-                            if data.get('valid', False):
-                                print(f"✅ Token válido verificado contra API")
-                                # Guardar token en configuración para uso futuro
-                                self.config['scan_token'] = token
+                            response = requests.post(
+                                f"{api_url}/api/validate-token",
+                                json={'token': token},
+                                timeout=timeout
+                            )
+                            
+                            print(f"📡 Respuesta de API: Status {response.status_code}")
+                            
+                            if response.status_code == 200:
+                                data = response.json()
+                                print(f"📡 Datos de respuesta: {data}")
                                 
-                                # Actualizar también en db_integration inmediatamente
-                                if hasattr(self, 'db_integration') and self.db_integration:
-                                    self.db_integration.scan_token = token
-                                    print(f"✅ Token actualizado en db_integration inmediatamente")
-                                
-                                try:
-                                    # Buscar archivo de configuración
-                                    import os
-                                    possible_paths = [
-                                        'config.json',
-                                        os.path.join(os.path.dirname(__file__), 'config.json'),
-                                        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config.json'),
-                                        os.path.join(os.getcwd(), 'config.json')
-                                    ]
+                                if data.get('valid', False):
+                                    print(f"✅ Token válido verificado contra API")
+                                    # Guardar token en configuración para uso futuro
+                                    self.config['scan_token'] = token
                                     
-                                    config_path = None
-                                    for path in possible_paths:
-                                        if os.path.exists(path):
-                                            config_path = path
-                                            break
+                                    # Actualizar también en db_integration inmediatamente
+                                    if hasattr(self, 'db_integration') and self.db_integration:
+                                        self.db_integration.scan_token = token
+                                        print(f"✅ Token actualizado en db_integration inmediatamente")
                                     
-                                    if not config_path:
-                                        # Crear en el directorio actual
-                                        config_path = 'config.json'
-                                    
-                                    # Leer config existente para no sobrescribir otros valores
+                                    # Guardar token en archivo de configuración
                                     try:
-                                        with open(config_path, 'r', encoding='utf-8') as f:
-                                            existing_config = json.load(f)
-                                        existing_config['scan_token'] = token
-                                        existing_config['api_url'] = self.config.get('api_url', existing_config.get('api_url', 'http://localhost:5000'))
-                                        existing_config['web_url'] = self.config.get('web_url', existing_config.get('web_url', 'http://localhost:8080'))
-                                        self.config = existing_config
-                                    except:
-                                        # Si no existe, usar el config actual
-                                        pass
+                                        import os
+                                        import json
+                                        possible_paths = [
+                                            'config.json',
+                                            os.path.join(os.path.dirname(__file__), 'config.json'),
+                                            os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config.json'),
+                                            os.path.join(os.getcwd(), 'config.json')
+                                        ]
+                                        
+                                        config_path = None
+                                        for path in possible_paths:
+                                            if os.path.exists(path):
+                                                config_path = path
+                                                break
+                                        
+                                        if not config_path:
+                                            # Crear en el directorio actual
+                                            config_path = 'config.json'
+                                        
+                                        # Leer config existente para no sobrescribir otros valores
+                                        try:
+                                            with open(config_path, 'r', encoding='utf-8') as f:
+                                                existing_config = json.load(f)
+                                            existing_config['scan_token'] = token
+                                            existing_config['api_url'] = self.config.get('api_url', existing_config.get('api_url', 'https://ssapi-cfni.onrender.com'))
+                                            existing_config['web_url'] = self.config.get('web_url', existing_config.get('web_url', 'https://aspersprojectsss.onrender.com'))
+                                            self.config = existing_config
+                                        except:
+                                            # Si no existe, usar el config actual
+                                            pass
+                                        
+                                        with open(config_path, 'w', encoding='utf-8') as f:
+                                            json.dump(self.config, f, indent=2, ensure_ascii=False)
+                                        print(f"💾 Token guardado en {config_path}")
+                                    except Exception as save_error:
+                                        print(f"⚠️ No se pudo guardar token en archivo: {str(save_error)}")
                                     
-                                    import json
-                                    with open(config_path, 'w', encoding='utf-8') as f:
-                                        json.dump(self.config, f, indent=4)
-                                    print(f"✅ Token guardado en configuración: {config_path}")
-                                    print(f"✅ Token verificado en archivo: {self.config.get('scan_token', '')[:20]}...")
-                                except Exception as e:
-                                    print(f"⚠️ No se pudo guardar token en config: {e}")
-                                    import traceback
-                                    traceback.print_exc()
-                                return True
+                                    return True  # Token válido
+                                else:
+                                    # Token inválido, no reintentar
+                                    error_msg = data.get('error', 'Token inválido')
+                                    print(f"❌ Token inválido según API: {error_msg}")
+                                    return False
                             else:
-                                error_msg = data.get('error', 'Token no válido')
-                                print(f"❌ Token inválido según API: {error_msg}")
-                                print(f"💡 Verifica que:")
-                                print(f"   1. El token fue copiado correctamente (sin espacios)")
-                                print(f"   2. El token no haya expirado")
-                                print(f"   3. El token esté activo en el panel web")
-                                return False
-                        else:
-                            print(f"❌ Error de API al validar token: {response.status_code}")
-                            print(f"📡 Respuesta completa: {response.text}")
-                            return False
+                                # Error HTTP, reintentar si no es 4xx (errores del cliente)
+                                if response.status_code < 400 or response.status_code >= 500:
+                                    if attempt < max_retries - 1:
+                                        continue  # Reintentar
+                                    else:
+                                        raise Exception(f"Error HTTP {response.status_code} después de {max_retries} intentos")
+                                else:
+                                    # Error 4xx, no reintentar
+                                    break
+                        except requests.exceptions.Timeout:
+                            if attempt < max_retries - 1:
+                                print(f"⏱️ Timeout en intento {attempt + 1}, reintentando...")
+                                continue
+                            else:
+                                print(f"❌ Timeout después de {max_retries} intentos. La API puede estar sobrecargada o inactiva.")
+                                raise
+                        except requests.exceptions.ConnectionError as e:
+                            if attempt < max_retries - 1:
+                                print(f"🔌 Error de conexión en intento {attempt + 1}, reintentando...")
+                                continue
+                            else:
+                                print(f"❌ Error de conexión después de {max_retries} intentos: {str(e)}")
+                                raise
+                        except Exception as e:
+                            if attempt < max_retries - 1:
+                                print(f"⚠️ Error en intento {attempt + 1}: {str(e)}, reintentando...")
+                                continue
+                            else:
+                                raise
                             
-                    except requests.exceptions.ConnectionError as conn_err:
-                        print(f"⚠️ No se pudo conectar con la API en {api_url}")
-                        print(f"⚠️ Error de conexión: {conn_err}")
-                        print(f"💡 Asegúrate de que:")
-                        print(f"   1. La API esté corriendo en {api_url}")
-                        print(f"   2. No haya firewall bloqueando la conexión")
+                    # Si llegamos aquí después de todos los reintentos sin éxito, retornar False
+                    print(f"❌ No se pudo validar el token después de {max_retries} intentos")
+                    return False
+                            
+                except requests.exceptions.ConnectionError as conn_err:
+                    print(f"⚠️ No se pudo conectar con la API en {api_url}")
+                    print(f"⚠️ Error de conexión: {conn_err}")
+                    print(f"💡 Asegúrate de que:")
+                    print(f"   1. La API esté corriendo en {api_url}")
+                    print(f"   2. No haya firewall bloqueando la conexión")
+                    try:
                         messagebox.showerror(
                             "Error de Conexión",
                             f"No se pudo conectar con la API en {api_url}\n\n"
                             f"Asegúrate de que la API esté corriendo.\n"
                             f"Puedes iniciarla con: INICIAR_SISTEMA_COMPLETO.bat"
                         )
-                        return False
-                    except Exception as e:
-                        print(f"❌ Error al validar token: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        return False
+                    except:
+                        pass
+                    return False
+                except Exception as e:
+                    print(f"❌ Error al validar token: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    return False
                     
                 except ImportError:
                     print(f"❌ Módulo requests no disponible para validar token")
