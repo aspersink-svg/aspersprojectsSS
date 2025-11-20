@@ -2,7 +2,7 @@
     "discord_webhook": "",
     "auth_token": "",
     "scan_timeout": 300,
-    "scan_token": "XdLl5-QC6MplJ1hzILIdcecxf6F2g7fc9_5qoBlIPUE",
-    "api_url": "http://localhost:5000",
-    "web_url": "http://localhost:8080"
+    "scan_token": "",
+    "api_url": "https://ssapi-cfni.onrender.com",
+    "web_url": "https://aspersprojectsss.onrender.com"
 }

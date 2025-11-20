@@ -7,6 +7,7 @@ import os
 import requests
 import json
 import datetime
+import secrets
 from functools import wraps
 
 # Importar sistema de autenticación
@@ -1020,53 +1021,92 @@ def api_admin_update_company():
 # API PROXY - Conecta con la API REST
 # ============================================================
 
+# IMPORTANTE: Separación de tokens
+# - /api/tokens -> Tokens de ESCANEO (para la aplicación SS) - Tabla: scan_tokens
+# - /api/registration-tokens -> Tokens de REGISTRO (para usuarios) - Tabla: registration_tokens
+
 @app.route('/api/tokens', methods=['GET'])
 @admin_required
 def list_tokens():
-    """Lista tokens - Usa endpoint local en lugar de proxy"""
-    # Redirigir al endpoint local de administración
-    include_used = request.args.get('include_used', 'false').lower() == 'true'
-    tokens = list_registration_tokens(include_used=include_used)
-    return jsonify({'success': True, 'tokens': tokens})
+    """Lista tokens de ESCANEO (para la aplicación SS) - CORREGIDO"""
+    try:
+        # Listar tokens de ESCANEO desde la BD de la API (scan_tokens)
+        with get_api_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT id, token, created_at, expires_at, used_count, max_uses, 
+                       is_active, created_by, description
+                FROM scan_tokens
+                ORDER BY created_at DESC
+                LIMIT 100
+            ''')
+            
+            tokens = []
+            for row in cursor.fetchall():
+                tokens.append({
+                    'id': row[0],
+                    'token': row[1],
+                    'created_at': row[2],
+                    'expires_at': row[3],
+                    'used_count': row[4],
+                    'max_uses': row[5],
+                    'is_active': bool(row[6]),
+                    'created_by': row[7],
+                    'description': row[8],
+                    'type': 'scan_token'  # Indicar que es un token de escaneo
+                })
+        
+        return jsonify({'success': True, 'tokens': tokens})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/tokens', methods=['POST'])
 @admin_required
 def create_token():
-    """Crea un nuevo token - OPTIMIZADO"""
+    """Crea un nuevo token de ESCANEO (para la aplicación SS) - CORREGIDO"""
+    import secrets
     try:
         data = request.json or {}
         
-        expires_hours = data.get('expires_hours', data.get('expires_days', 1) * 24)
+        # Convertir días a horas si viene en días
+        expires_days = data.get('expires_days', data.get('expires_hours', 1) / 24 if 'expires_hours' in data else 30)
+        if 'expires_hours' in data:
+            expires_days = data.get('expires_hours', 24) / 24
+        
+        max_uses = data.get('max_uses', -1)  # -1 = ilimitado
         description = data.get('description', '')
-        company_id = data.get('company_id')
-        is_admin_token = data.get('is_admin_token', False)
         
-        created_by = session.get('user_id')
-        if not created_by:
-            return jsonify({'success': False, 'error': 'Usuario no autenticado'}), 401
+        # Obtener usuario actual
+        user = get_user_by_id(session.get('user_id'))
+        created_by = user.get('username', 'web_app') if user else 'web_app'
         
-        result = create_registration_token(
-            created_by=created_by,
-            company_id=company_id,
-            expires_hours=expires_hours,
-            description=description,
-            is_admin_token=is_admin_token
-        )
+        # Crear token de ESCANEO directamente en la BD de la API (scan_tokens)
+        # NOTA: Este es un token de ESCANEO, no de registro de usuarios
+        token = secrets.token_urlsafe(32)
+        expires_at = None
+        if expires_days > 0:
+            expires_at = (datetime.datetime.now() + datetime.timedelta(days=expires_days)).isoformat()
         
-        if result['success']:
-            return jsonify({
-                'success': True,
-                'token': result['token'],
-                'token_id': result['token_id'],
-                'expires_at': result['expires_at'].isoformat(),
-                'company_id': company_id,
-                'is_admin_token': is_admin_token
-            }), 201
-        else:
-            return jsonify({'success': False, 'error': result.get('error', 'Error desconocido al crear token')}), 400
+        # Insertar directamente en scan_tokens (tabla de la API)
+        with get_api_db_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO scan_tokens (token, expires_at, max_uses, description, created_by)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (token, expires_at, max_uses, description, created_by))
+            
+            token_id = cursor.lastrowid
+        
+        return jsonify({
+            'success': True,
+            'token': token,
+            'token_id': token_id,
+            'expires_at': expires_at,
+            'max_uses': max_uses,
+            'description': description,
+            'type': 'scan_token'  # Indicar que es un token de escaneo
+        }), 201
     except Exception as e:
         import traceback
-        error_msg = f'Error inesperado al crear token: {str(e)}'
+        error_msg = f'Error inesperado al crear token de escaneo: {str(e)}'
         print(f"ERROR create_token: {error_msg}")
         print(traceback.format_exc())
         return jsonify({'success': False, 'error': error_msg}), 500
@@ -1074,26 +1114,18 @@ def create_token():
 @app.route('/api/tokens/<int:token_id>', methods=['DELETE'])
 @admin_required
 def delete_token(token_id):
-    """Elimina permanentemente un token - Usa función local"""
+    """Elimina permanentemente un token de ESCANEO - CORREGIDO"""
     try:
-        import sqlite3
-        from auth import DATABASE
+        # Eliminar token de ESCANEO desde la BD de la API (scan_tokens)
+        with get_api_db_cursor() as cursor:
+            # Verificar que el token existe
+            cursor.execute('SELECT id FROM scan_tokens WHERE id = ?', (token_id,))
+            if not cursor.fetchone():
+                return jsonify({'success': False, 'error': 'Token no encontrado'}), 404
+            
+            cursor.execute('DELETE FROM scan_tokens WHERE id = ?', (token_id,))
         
-        conn = sqlite3.connect(DATABASE)
-        cursor = conn.cursor()
-        
-        # Verificar que el token existe
-        cursor.execute('SELECT id FROM registration_tokens WHERE id = ?', (token_id,))
-        if not cursor.fetchone():
-            conn.close()
-            return jsonify({'success': False, 'error': 'Token no encontrado'}), 404
-        
-        # Eliminar el token
-        cursor.execute('DELETE FROM registration_tokens WHERE id = ?', (token_id,))
-        conn.commit()
-        conn.close()
-        
-        return jsonify({'success': True, 'message': 'Token eliminado permanentemente'}), 200
+        return jsonify({'success': True, 'message': 'Token de escaneo eliminado exitosamente'}), 200
     except Exception as e:
         import traceback
         print(f"Error al eliminar token: {str(e)}")
@@ -1103,57 +1135,177 @@ def delete_token(token_id):
 @app.route('/api/scans', methods=['GET'])
 @login_required
 def list_scans():
-    """Lista escaneos desde la API"""
+    """Lista escaneos - OPTIMIZADO: Acceso directo a BD sin HTTP"""
+    import time
+    
+    limit = request.args.get('limit', 50, type=int)
+    offset = request.args.get('offset', 0, type=int)
+    
+    # Caché por limit/offset (10 segundos TTL)
+    cache_key = f'scans_list_{limit}_{offset}'
+    if cache_key in _stats_cache:
+        if time.time() - _stats_cache_time.get(cache_key, 0) < 10:
+            return jsonify(_stats_cache[cache_key]), 200
+    
     try:
-        limit = request.args.get('limit', 50, type=int)
-        offset = request.args.get('offset', 0, type=int)
-        headers = {}
-        if API_KEY:
-            headers['X-API-Key'] = API_KEY
-        response = requests.get(
-            get_api_url('/api/scans'),
-            params={'limit': limit, 'offset': offset},
-            headers=headers,
-            timeout=10
-        )
-        if response.status_code == 200:
-            return jsonify(response.json())
-        elif response.status_code == 401:
-            return jsonify({'error': 'API Key inválida. Verifica la configuración.'}), 401
-        else:
-            return jsonify({'error': f'Error al obtener escaneos: {response.status_code}', 'details': response.text}), 500
-    except requests.exceptions.ConnectionError:
-        error_msg = 'No se pudo conectar a la API.'
-        if IS_RENDER:
-            error_msg += ' En Render, asegúrate de que la API esté configurada correctamente.'
-        else:
-            error_msg += ' Verifica que esté corriendo en http://localhost:5000'
-        return jsonify({'error': error_msg}), 503
-    except requests.exceptions.Timeout:
-        return jsonify({'error': 'Timeout al conectar con la API. La API puede estar sobrecargada.'}), 504
+        # Acceso directo a BD (SIN HTTP - MUCHO MÁS RÁPIDO)
+        with get_api_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT id, scan_token, started_at, completed_at, status,
+                       total_files_scanned, issues_found, scan_duration, machine_name
+                FROM scans
+                ORDER BY started_at DESC
+                LIMIT ? OFFSET ?
+            ''', (limit, offset))
+            
+            scans = []
+            scan_ids = []
+            for row in cursor.fetchall():
+                scan_id = row[0]
+                scan_ids.append(scan_id)
+                scans.append({
+                    'id': scan_id,
+                    'scan_token': row[1],
+                    'started_at': row[2],
+                    'completed_at': row[3],
+                    'status': row[4],
+                    'total_files_scanned': row[5],
+                    'issues_found': row[6],
+                    'scan_duration': row[7],
+                    'machine_name': row[8]
+                })
+            
+            # Calcular preview de severidad (una sola query optimizada)
+            if scan_ids:
+                placeholders = ','.join(['?'] * len(scan_ids))
+                cursor.execute(f'''
+                    SELECT scan_id, 
+                           SUM(CASE WHEN alert_level = 'CRITICAL' THEN 1 ELSE 0 END) as critical,
+                           SUM(CASE WHEN alert_level IN ('SOSPECHOSO', 'HACKS') THEN 1 ELSE 0 END) as suspicious,
+                           SUM(CASE WHEN alert_level = 'POCO_SOSPECHOSO' THEN 1 ELSE 0 END) as low,
+                           COUNT(*) as total
+                    FROM scan_results
+                    WHERE scan_id IN ({placeholders})
+                    GROUP BY scan_id
+                ''', scan_ids)
+                
+                severity_map = {}
+                for row in cursor.fetchall():
+                    scan_id, critical, suspicious, low, total = row
+                    if critical > 0:
+                        severity_map[scan_id] = {'summary': 'CRITICO', 'badge': 'danger'}
+                    elif suspicious > 0:
+                        severity_map[scan_id] = {'summary': 'SOSPECHOSO', 'badge': 'warning'}
+                    elif low > 0:
+                        severity_map[scan_id] = {'summary': 'POCO_SOSPECHOSO', 'badge': 'info'}
+                    elif total == 0:
+                        severity_map[scan_id] = {'summary': 'LIMPIO', 'badge': 'success'}
+                    else:
+                        severity_map[scan_id] = {'summary': 'NORMAL', 'badge': 'secondary'}
+                
+                # Agregar preview a cada scan
+                for scan in scans:
+                    if scan['id'] in severity_map:
+                        scan['severity_summary'] = severity_map[scan['id']]['summary']
+                        scan['severity_badge'] = severity_map[scan['id']]['badge']
+                    else:
+                        scan['severity_summary'] = 'LIMPIO' if scan['issues_found'] == 0 else 'SOSPECHOSO'
+                        scan['severity_badge'] = 'success' if scan['issues_found'] == 0 else 'warning'
+            
+            result = {'scans': scans}
+            
+            # Guardar en caché
+            _stats_cache[cache_key] = result
+            _stats_cache_time[cache_key] = time.time()
+            
+            return jsonify(result), 200
     except Exception as e:
         import traceback
-        print(f"Error en create_token: {str(e)}")
+        print(f"Error en list_scans: {str(e)}")
         print(traceback.format_exc())
         return jsonify({'error': f'Error inesperado: {str(e)}'}), 500
 
 @app.route('/api/scans/<int:scan_id>', methods=['GET'])
 @login_required
 def get_scan(scan_id):
-    """Obtiene un escaneo específico"""
+    """Obtiene un escaneo específico - OPTIMIZADO: Acceso directo a BD sin HTTP"""
+    import time
+    
+    # Caché por scan_id (5 segundos TTL)
+    cache_key = f'scan_{scan_id}'
+    if cache_key in _stats_cache:
+        if time.time() - _stats_cache_time.get(cache_key, 0) < 5:
+            return jsonify(_stats_cache[cache_key]), 200
+    
     try:
-        headers = {}
-        if API_KEY:
-            headers['X-API-Key'] = API_KEY
-        response = requests.get(
-            get_api_url(f'/api/scans/{scan_id}'),
-            headers=headers,
-            timeout=10
-        )
-        if response.status_code == 200:
-            return jsonify(response.json())
-        return jsonify({'error': 'Error al obtener escaneo'}), 500
+        # Acceso directo a BD (SIN HTTP - MUCHO MÁS RÁPIDO)
+        with get_api_db_cursor() as cursor:
+            cursor.execute('''
+                SELECT id, token_id, scan_token, started_at, completed_at, status,
+                       total_files_scanned, issues_found, scan_duration, machine_id, machine_name,
+                       ip_address, country, minecraft_username
+                FROM scans
+                WHERE id = ?
+            ''', (scan_id,))
+            
+            row = cursor.fetchone()
+            if not row:
+                return jsonify({'error': 'Escaneo no encontrado'}), 404
+            
+            scan = {
+                'id': row[0],
+                'token_id': row[1],
+                'scan_token': row[2],
+                'started_at': row[3],
+                'completed_at': row[4],
+                'status': row[5],
+                'total_files_scanned': row[6],
+                'issues_found': row[7],
+                'scan_duration': row[8],
+                'machine_id': row[9],
+                'machine_name': row[10],
+                'ip_address': row[11] if len(row) > 11 else None,
+                'country': row[12] if len(row) > 12 else None,
+                'minecraft_username': row[13] if len(row) > 13 else None
+            }
+            
+            # Obtener resultados
+            cursor.execute('''
+                SELECT id, issue_type, issue_name, issue_path, issue_category,
+                       alert_level, confidence, detected_patterns, obfuscation_detected,
+                       file_hash, ai_analysis, ai_confidence
+                FROM scan_results
+                WHERE scan_id = ?
+            ''', (scan_id,))
+            
+            results = []
+            for r in cursor.fetchall():
+                results.append({
+                    'id': r[0],
+                    'issue_type': r[1],
+                    'issue_name': r[2],
+                    'issue_path': r[3],
+                    'issue_category': r[4],
+                    'alert_level': r[5],
+                    'confidence': r[6],
+                    'detected_patterns': json.loads(r[7]) if r[7] else [],
+                    'obfuscation_detected': bool(r[8]),
+                    'file_hash': r[9],
+                    'ai_analysis': r[10],
+                    'ai_confidence': r[11]
+                })
+            
+            scan['results'] = results
+            
+            # Guardar en caché
+            _stats_cache[cache_key] = scan
+            _stats_cache_time[cache_key] = time.time()
+            
+            return jsonify(scan), 200
     except Exception as e:
+        import traceback
+        print(f"Error en get_scan: {str(e)}")
+        print(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/feedback', methods=['POST'])
@@ -1179,7 +1331,7 @@ def submit_feedback():
                 get_api_url('/api/feedback'),
                 json=data,
                 headers=headers,
-                timeout=10
+                timeout=5  # Reducido de 10 a 5 segundos
             )
         except requests.exceptions.ConnectionError:
             error_msg = 'No se pudo conectar a la API.'
@@ -1295,7 +1447,7 @@ def get_feedback(result_id):
         response = requests.get(
             get_api_url(f'/api/feedback/{result_id}'),
             headers=headers,
-            timeout=10
+            timeout=5
         )
         if response.status_code == 200:
             return jsonify(response.json())
@@ -1313,7 +1465,7 @@ def update_model():
         response = requests.post(
             get_api_url('/api/update-model'),
             headers=headers,
-            timeout=60
+            timeout=30
         )
         if response.status_code == 200:
             data = response.json()
@@ -1352,7 +1504,7 @@ def get_learned_patterns():
         response = requests.get(
             get_api_url('/api/learned-patterns'),
             headers=headers,
-            timeout=10
+            timeout=5
         )
         if response.status_code == 200:
             return jsonify(response.json())
@@ -1366,7 +1518,7 @@ def get_latest_ai_model():
     try:
         response = requests.get(
             get_api_url('/api/ai-model/latest'),
-            timeout=10
+            timeout=5
         )
         if response.status_code == 200:
             return jsonify(response.json())
@@ -1541,7 +1693,7 @@ def generate_app():
                         'file_hash': file_hash
                     },
                     headers=headers,
-                    timeout=10
+                    timeout=5
                 )
             except:
                 pass
