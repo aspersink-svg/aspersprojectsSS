@@ -1290,12 +1290,19 @@ async function downloadApp() {
         } else {
             // Mensaje cuando no se encuentra el ejecutable
             const errorMsg = data.error || 'No se encontró el ejecutable compilado.';
-            alert(`⚠️ ${errorMsg}\n\n` +
-                  'El ejecutable debe estar en una de estas ubicaciones:\n' +
-                  '• downloads/MinecraftSSTool.exe\n' +
-                  '• source/dist/MinecraftSSTool.exe\n' +
-                  '• MinecraftSSTool.exe (raíz del proyecto)\n\n' +
-                  'Asegúrate de que el archivo .exe esté compilado y subido al repositorio.');
+            
+            if (data.is_render) {
+                // Mensaje específico para Render
+                alert(`⚠️ ${errorMsg}`);
+            } else {
+                // Mensaje para local
+                alert(`⚠️ ${errorMsg}\n\n` +
+                      'El ejecutable debe estar en una de estas ubicaciones:\n' +
+                      '• downloads/MinecraftSSTool.exe\n' +
+                      '• source/dist/MinecraftSSTool.exe\n' +
+                      '• MinecraftSSTool.exe (raíz del proyecto)\n\n' +
+                      'Asegúrate de que el archivo .exe esté compilado.');
+            }
         }
     } catch (error) {
         alert('Error al descargar aplicación: ' + error.message);

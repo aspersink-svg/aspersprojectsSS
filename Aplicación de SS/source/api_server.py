@@ -2101,11 +2101,20 @@ if __name__ == '__main__':
     init_db()
     print("✅ Base de datos inicializada con índices optimizados")
     print("⚡ Optimizaciones activas: WAL mode, conexión pooling, caché en memoria")
-    print("📡 API disponible en http://localhost:5000")
+    
+    # Detectar si estamos en Render
+    port = int(os.environ.get('PORT', 5000))
+    is_render = bool(os.environ.get('RENDER'))
+    
+    if is_render:
+        print(f"📡 API disponible en Render (puerto {port})")
+    else:
+        print(f"📡 API disponible en http://localhost:{port}")
+    
     print("🔑 API Key:", API_SECRET_KEY)
     app.run(
         host='0.0.0.0', 
-        port=5000, 
+        port=port, 
         threaded=True,  # Habilitar threading para mejor concurrencia
         debug=False  # Deshabilitar debug en producción para mejor rendimiento
     )

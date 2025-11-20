@@ -38,10 +38,16 @@ RENDER_EXTERNAL_URL = os.environ.get('RENDER_EXTERNAL_URL')  # Render proporcion
 IS_RENDER = bool(RENDER_EXTERNAL_URL)
 
 if IS_RENDER:
-    # En Render, la API está en la misma URL base (mismo servidor)
-    # Usar la URL externa de Render o la misma base
-    base_url = RENDER_EXTERNAL_URL.rstrip('/')
-    API_BASE_URL = base_url  # URL base sin /api
+    # En Render, verificar si hay una API_URL configurada (servicio separado)
+    # Si no, asumir que la API está en el mismo servidor
+    api_url_env = os.environ.get('API_URL')
+    if api_url_env:
+        # API en servicio separado de Render
+        API_BASE_URL = api_url_env.rstrip('/')
+    else:
+        # API en el mismo servidor (mismo servicio)
+        base_url = RENDER_EXTERNAL_URL.rstrip('/')
+        API_BASE_URL = base_url
 else:
     # En desarrollo local, usar localhost:5000
     API_BASE_URL = os.environ.get('API_URL', 'http://localhost:5000')
@@ -1607,9 +1613,22 @@ def get_latest_exe():
             'modified_at': datetime.fromtimestamp(latest_time).isoformat()
         })
     else:
+        error_msg = 'No se encontró ejecutable compilado.'
+        if IS_RENDER:
+            error_msg += '\n\nEl archivo .exe debe estar en GitHub en una de estas ubicaciones:\n'
+            error_msg += '• source/dist/MinecraftSSTool.exe\n'
+            error_msg += '• downloads/MinecraftSSTool.exe\n\n'
+            error_msg += 'Pasos para solucionarlo:\n'
+            error_msg += '1. Compila el .exe localmente\n'
+            error_msg += '2. Ejecuta SUBIR_EXE_A_GITHUB.bat\n'
+            error_msg += '3. Sube los cambios a GitHub\n'
+            error_msg += '4. Render se actualizará automáticamente'
+        else:
+            error_msg += ' Asegúrate de que el archivo .exe esté en la carpeta downloads/, source/dist/, o en la raíz del proyecto.'
+        
         return jsonify({
             'success': False,
-            'error': 'No se encontró ejecutable compilado. Asegúrate de que el archivo .exe esté en la carpeta downloads/, source/dist/, o en la raíz del proyecto.',
+            'error': error_msg,
             'is_render': IS_RENDER
         }), 404
 

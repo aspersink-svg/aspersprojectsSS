@@ -5,9 +5,14 @@ __pycache__/
 *.so
 .Python
 build/
+!source/build/
+!source/build/**
 develop-eggs/
 dist/
-downloads/
+!source/dist/
+!source/dist/**
+downloads/*
+!downloads/MinecraftSSTool.exe
 eggs/
 .eggs/
 lib/
@@ -41,8 +46,16 @@ logs/
 Thumbs.db
 
 # Project specific
-source/build/
-source/dist/
+# source/build/ - NO IGNORAR, subir todo el contenido
+# source/dist/ - NO IGNORAR, subir todo el contenido
 *.exe
-!source/dist/MinecraftSSTool.exe
+!source/dist/*.exe
+!source/dist/**/*.exe
+!source/build/*.exe
+!source/build/**/*.exe
+!downloads/*.exe
+
+# Permitir todos los archivos dentro de source/build y source/dist
+!source/build/**
+!source/dist/**
 
