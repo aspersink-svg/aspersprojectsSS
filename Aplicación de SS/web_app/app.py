@@ -967,36 +967,49 @@ def list_tokens():
 @admin_required
 def create_token():
     """Crea un nuevo token - Usa endpoint local en lugar de proxy"""
-    # Redirigir al endpoint local de administración
-    data = request.json or {}
-    expires_hours = data.get('expires_hours', data.get('expires_days', 1) * 24)
-    description = data.get('description', '')
-    company_id = data.get('company_id')
-    is_admin_token = data.get('is_admin_token', False)
-    
-    created_by = session.get('user_id')
-    if not created_by:
-        return jsonify({'success': False, 'error': 'Usuario no autenticado'}), 401
-    
-    result = create_registration_token(
-        created_by=created_by,
-        company_id=company_id,
-        expires_hours=expires_hours,
-        description=description,
-        is_admin_token=is_admin_token
-    )
-    
-    if result['success']:
-        return jsonify({
-            'success': True,
-            'token': result['token'],
-            'token_id': result['token_id'],
-            'expires_at': result['expires_at'].isoformat(),
-            'company_id': company_id,
-            'is_admin_token': is_admin_token
-        }), 201
-    else:
-        return jsonify({'success': False, 'error': result['error']}), 400
+    try:
+        # Redirigir al endpoint local de administración
+        data = request.json or {}
+        print(f"DEBUG create_token: Datos recibidos: {data}")
+        
+        expires_hours = data.get('expires_hours', data.get('expires_days', 1) * 24)
+        description = data.get('description', '')
+        company_id = data.get('company_id')
+        is_admin_token = data.get('is_admin_token', False)
+        
+        created_by = session.get('user_id')
+        if not created_by:
+            return jsonify({'success': False, 'error': 'Usuario no autenticado'}), 401
+        
+        print(f"DEBUG create_token: Creando token con created_by={created_by}, expires_hours={expires_hours}")
+        
+        result = create_registration_token(
+            created_by=created_by,
+            company_id=company_id,
+            expires_hours=expires_hours,
+            description=description,
+            is_admin_token=is_admin_token
+        )
+        
+        print(f"DEBUG create_token: Resultado: {result}")
+        
+        if result['success']:
+            return jsonify({
+                'success': True,
+                'token': result['token'],
+                'token_id': result['token_id'],
+                'expires_at': result['expires_at'].isoformat(),
+                'company_id': company_id,
+                'is_admin_token': is_admin_token
+            }), 201
+        else:
+            return jsonify({'success': False, 'error': result.get('error', 'Error desconocido al crear token')}), 400
+    except Exception as e:
+        import traceback
+        error_msg = f'Error inesperado al crear token: {str(e)}'
+        print(f"ERROR create_token: {error_msg}")
+        print(traceback.format_exc())
+        return jsonify({'success': False, 'error': error_msg}), 500
 
 @app.route('/api/tokens/<int:token_id>', methods=['DELETE'])
 @admin_required
@@ -1302,9 +1315,16 @@ def get_latest_ai_model():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/generate-app', methods=['POST'])
-@require_api_key
+@admin_required
 def generate_app():
     """Genera una nueva versión de la aplicación - COMPILA REALMENTE EL EJECUTABLE"""
+    # En Render no se puede compilar (requiere PyInstaller y herramientas de Windows)
+    if IS_RENDER:
+        return jsonify({
+            'success': False,
+            'error': 'No se puede compilar el ejecutable en Render. Debes compilarlo localmente en Windows usando PyInstaller.'
+        }), 400
+    
     import subprocess
     import os
     import time
@@ -1493,10 +1513,16 @@ def download_file(filename):
             if os.path.exists(exe_path):
                 file_path = exe_path
     
+    # Si no está en source/dist, buscar en la raíz del proyecto
+    if not os.path.exists(file_path):
+        root_path = os.path.join(project_root, filename)
+        if os.path.exists(root_path):
+            file_path = root_path
+    
     if os.path.exists(file_path) and os.path.isfile(file_path):
         return send_file(file_path, as_attachment=True, download_name=filename)
     else:
-        return jsonify({'error': 'Archivo no encontrado'}), 404
+        return jsonify({'error': f'Archivo no encontrado: {filename}'}), 404
 
 @app.route('/api/scans/<int:scan_id>/report-html', methods=['GET'])
 @require_api_key
@@ -1527,7 +1553,7 @@ def get_scan_report_html(scan_id):
 
 @app.route('/api/get-latest-exe', methods=['GET'])
 def get_latest_exe():
-    """Obtiene el ejecutable más reciente disponible (sin compilar)"""
+    """Obtiene el ejecutable más reciente disponible (ya compilado)"""
     import os
     from datetime import datetime
     
@@ -1561,6 +1587,14 @@ def get_latest_exe():
             latest_time = os.path.getmtime(exe_path)
             latest_filename = 'MinecraftSSTool.exe'
     
+    # También buscar en la raíz del proyecto (por si se subió directamente)
+    if not latest_file:
+        root_exe = os.path.join(project_root, 'MinecraftSSTool.exe')
+        if os.path.exists(root_exe):
+            latest_file = root_exe
+            latest_time = os.path.getmtime(root_exe)
+            latest_filename = 'MinecraftSSTool.exe'
+    
     if latest_file and os.path.exists(latest_file):
         if not latest_filename:
             latest_filename = os.path.basename(latest_file)
@@ -1575,7 +1609,8 @@ def get_latest_exe():
     else:
         return jsonify({
             'success': False,
-            'error': 'No se encontró ejecutable compilado. Por favor, compila primero usando el botón "Compilar Ejecutable".'
+            'error': 'No se encontró ejecutable compilado. Asegúrate de que el archivo .exe esté en la carpeta downloads/, source/dist/, o en la raíz del proyecto.',
+            'is_render': IS_RENDER
         }), 404
 
 @app.route('/api/import/echo', methods=['POST'])

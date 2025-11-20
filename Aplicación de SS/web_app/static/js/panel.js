@@ -1288,7 +1288,14 @@ async function downloadApp() {
             
             alert(`✅ Descarga iniciada.\n\nArchivo: ${data.filename}\n\nEste ejecutable incluye todas las actualizaciones de IA descargadas automáticamente.`);
         } else {
-            alert('No se encontró un ejecutable compilado. Por favor, compila primero usando el botón "Compilar Ejecutable".');
+            // Mensaje cuando no se encuentra el ejecutable
+            const errorMsg = data.error || 'No se encontró el ejecutable compilado.';
+            alert(`⚠️ ${errorMsg}\n\n` +
+                  'El ejecutable debe estar en una de estas ubicaciones:\n' +
+                  '• downloads/MinecraftSSTool.exe\n' +
+                  '• source/dist/MinecraftSSTool.exe\n' +
+                  '• MinecraftSSTool.exe (raíz del proyecto)\n\n' +
+                  'Asegúrate de que el archivo .exe esté compilado y subido al repositorio.');
         }
     } catch (error) {
         alert('Error al descargar aplicación: ' + error.message);
