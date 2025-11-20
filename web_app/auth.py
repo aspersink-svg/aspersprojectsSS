@@ -287,12 +287,6 @@ def authenticate_user(username, password):
         conn = sqlite3.connect(DATABASE)
         cursor = conn.cursor()
         
-        # Debug: Verificar qué usuarios existen
-        cursor.execute('SELECT username FROM users LIMIT 10')
-        all_users = cursor.fetchall()
-        print(f"DEBUG - Usuarios en BD: {[u[0] for u in all_users]}")
-        print(f"DEBUG - Buscando usuario: '{username}'")
-        
         cursor.execute('''
             SELECT id, username, email, password_hash, roles, is_active, company_id
             FROM users
@@ -312,7 +306,6 @@ def authenticate_user(username, password):
             
             if not user:
                 conn.close()
-                print(f"DEBUG - Usuario '{username}' NO encontrado")
                 return {'success': False, 'error': 'Usuario no encontrado'}
         
         user_id, db_username, email, password_hash, roles_json, is_active, company_id = user
@@ -353,41 +346,39 @@ def authenticate_user(username, password):
         return {'success': False, 'error': str(e)}
 
 def create_registration_token(created_by, company_id=None, expires_hours=24, description=None, is_admin_token=False):
-    """Crea un token de registro de un solo uso, opcionalmente vinculado a una empresa"""
+    """Crea un token de registro de un solo uso, opcionalmente vinculado a una empresa - OPTIMIZADO"""
     try:
         conn = sqlite3.connect(DATABASE)
         cursor = conn.cursor()
         
-        # Si es token de empresa, validar límites
+        # Si es token de empresa, validar límites en UNA SOLA consulta optimizada
         if company_id:
-            cursor.execute('SELECT COUNT(*) FROM users WHERE company_id = ? AND is_active = 1', (company_id,))
-            current_users = cursor.fetchone()[0]
+            # Consulta única que obtiene toda la información necesaria
+            cursor.execute('''
+                SELECT 
+                    c.max_users,
+                    c.max_admins,
+                    (SELECT COUNT(*) FROM users WHERE company_id = ? AND is_active = 1) as current_users,
+                    (SELECT COUNT(*) FROM users WHERE company_id = ? AND is_active = 1 AND roles LIKE "%administrador%") as current_admins
+                FROM companies c
+                WHERE c.id = ?
+            ''', (company_id, company_id, company_id))
             
-            cursor.execute('SELECT max_users FROM companies WHERE id = ?', (company_id,))
             company_data = cursor.fetchone()
             if company_data:
-                max_users = company_data[0]
+                max_users, max_admins, current_users, current_admins = company_data
+                
+                # Validar límite de usuarios
                 if current_users >= max_users:
                     conn.close()
                     return {'success': False, 'error': f'La empresa ha alcanzado el límite de {max_users} usuarios'}
-            
-            # Si es token de admin, validar límite de admins
-            if is_admin_token:
-                cursor.execute('''
-                    SELECT COUNT(*) FROM users 
-                    WHERE company_id = ? AND is_active = 1 
-                    AND roles LIKE "%administrador%"
-                ''', (company_id,))
-                current_admins = cursor.fetchone()[0]
                 
-                cursor.execute('SELECT max_admins FROM companies WHERE id = ?', (company_id,))
-                max_admins_data = cursor.fetchone()
-                if max_admins_data:
-                    max_admins = max_admins_data[0]
-                    if current_admins >= max_admins:
-                        conn.close()
-                        return {'success': False, 'error': f'La empresa ha alcanzado el límite de {max_admins} administradores'}
+                # Si es token de admin, validar límite de admins
+                if is_admin_token and current_admins >= max_admins:
+                    conn.close()
+                    return {'success': False, 'error': f'La empresa ha alcanzado el límite de {max_admins} administradores'}
         
+        # Generar token y crear registro en una sola operación
         token = secrets.token_urlsafe(32)
         expires_at = datetime.datetime.now() + datetime.timedelta(hours=expires_hours)
         
@@ -425,12 +416,6 @@ def verify_registration_token(token):
         
         token_id, company_id, created_by, expires_at_str, is_used, used_at, is_admin_token = token_data
         
-        # Debug: Verificar valores del token desde BD
-        print(f"DEBUG TOKEN VERIFY - Token ID: {token_id}")
-        print(f"  company_id: {company_id}")
-        print(f"  is_admin_token (raw from DB): {is_admin_token}")
-        print(f"  is_admin_token (type): {type(is_admin_token)}")
-        
         # Convertir is_admin_token a booleano correctamente
         if isinstance(is_admin_token, int):
             is_admin_token_bool = bool(is_admin_token)
@@ -438,8 +423,6 @@ def verify_registration_token(token):
             is_admin_token_bool = is_admin_token.lower() in ('true', '1', 'yes')
         else:
             is_admin_token_bool = bool(is_admin_token)
-        
-        print(f"  is_admin_token (converted): {is_admin_token_bool}")
         
         if is_used:
             conn.close()

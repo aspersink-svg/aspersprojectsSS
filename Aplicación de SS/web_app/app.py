@@ -1,7 +1,7 @@
 """
 Aplicación Web Flask para Panel del Staff de ASPERS Projects
 """
-from flask import Flask, render_template, request, jsonify, session, Response, redirect, url_for, make_response
+from flask import Flask, render_template, request, jsonify, session, Response, redirect, url_for
 from flask_cors import CORS
 import os
 import requests
@@ -22,19 +22,13 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'aspers-secret-key-change-in-production')
 CORS(app)
 
-# Inicializar base de datos de autenticación al iniciar (en background para no bloquear)
-def init_db_async():
-    """Inicializa la BD de forma asíncrona para no bloquear el inicio"""
-    try:
-        init_auth_db()
-        print("✅ Base de datos de autenticación inicializada correctamente")
-    except Exception as e:
-        print(f"⚠️ Error al inicializar base de datos: {e}")
-        print("⚠️ La aplicación continuará, pero algunas funciones pueden no funcionar")
-
-# Inicializar en un thread separado para no bloquear el inicio
-import threading
-threading.Thread(target=init_db_async, daemon=True).start()
+# Inicializar base de datos de autenticación al iniciar
+try:
+    init_auth_db()
+    print("✅ Base de datos de autenticación inicializada correctamente")
+except Exception as e:
+    print(f"⚠️ Error al inicializar base de datos: {e}")
+    print("⚠️ La aplicación continuará, pero algunas funciones pueden no funcionar")
 
 # Health check endpoints (simplificado - sin import externo)
 
@@ -92,22 +86,17 @@ def require_api_key(f):
 @app.route('/')
 def index():
     """Página principal - Sobre ASPERS"""
-    response = make_response(render_template('index.html'))
-    # Agregar headers de caché para recursos estáticos
-    response.headers['Cache-Control'] = 'public, max-age=300'  # 5 minutos
-    return response
+    return render_template('index.html')
 
 @app.route('/health', methods=['GET'])
 @app.route('/healthz', methods=['GET'])
-@app.route('/ping', methods=['GET'])
 def health_check():
-    """Health check endpoint para Render - Optimizado para ser ultra-rápido"""
-    # Respuesta mínima y rápida para evitar spinning down
-    # Este endpoint se puede llamar periódicamente para mantener el servicio activo
-    response = make_response('OK', 200)
-    response.headers['Content-Type'] = 'text/plain'
-    response.headers['Cache-Control'] = 'no-cache'
-    return response
+    """Health check endpoint para Render"""
+    return jsonify({
+        'status': 'ok',
+        'service': 'aspers-web-app',
+        'timestamp': datetime.datetime.now().isoformat()
+    }), 200
 
 @app.route('/diagnostico-login')
 def diagnostico_login():
@@ -198,7 +187,15 @@ def login():
             return render_template('login.html', error=error_msg)
         
         # Debug logging
+        print(f"DEBUG LOGIN - Usuario recibido: '{username}'")
+        print(f"DEBUG LOGIN - Tipo de login: {login_type}")
+        print(f"DEBUG LOGIN - Base de datos: {os.path.join(os.getcwd(), 'scanner_db.sqlite')}")
+        
         result = authenticate_user(username, password)
+        
+        print(f"DEBUG LOGIN - Resultado autenticación: {result.get('success', False)}")
+        if not result.get('success'):
+            print(f"DEBUG LOGIN - Error: {result.get('error', 'Desconocido')}")
         
         if result['success']:
             user = result['user']
@@ -273,6 +270,7 @@ def register():
         is_admin_token = token_result.get('is_admin_token', False)
         
         # Debug: Verificar valores del token
+        print(f"DEBUG REGISTER - Token info:")
         print(f"  company_id: {company_id}")
         print(f"  is_admin_token (raw): {is_admin_token}")
         print(f"  is_admin_token (type): {type(is_admin_token)}")
@@ -288,11 +286,14 @@ def register():
             # Usuario de empresa
             if is_admin_token:
                 roles = ['empresa', 'administrador']
+                print(f"DEBUG REGISTER - Asignando roles de ADMIN: {roles}")
             else:
                 roles = ['empresa', 'staff']
+                print(f"DEBUG REGISTER - Asignando roles de STAFF: {roles}")
         else:
             # Usuario normal (sin empresa)
             roles = ['user']
+            print(f"DEBUG REGISTER - Asignando roles de USER: {roles}")
         
         # Crear usuario
         user_result = create_user(
@@ -381,107 +382,37 @@ def admin_subscriptions_logout():
 # API PROXY - Conecta con la API REST
 # ============================================================
 
-# ============================================================
-# FUNCIONES DE BASE DE DATOS COMPARTIDAS (SIN LATENCIA DE RED)
-# ============================================================
-import sqlite3
-from contextlib import contextmanager
-
-# Usar la misma base de datos que la API
-API_DATABASE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'source', 'scanner_db.sqlite')
-
-@contextmanager
-def get_api_db_cursor():
-    """Context manager para operaciones de base de datos de la API - SIN HTTP"""
-    conn = sqlite3.connect(API_DATABASE, check_same_thread=False, timeout=5.0)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    try:
-        yield cursor
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
-# Caché simple en memoria para estadísticas
-_stats_cache = {}
-_stats_cache_time = {}
-
 @app.route('/api/statistics', methods=['GET'])
 @login_required
 def get_statistics():
-    """Obtiene estadísticas - OPTIMIZADO: Acceso directo a BD sin HTTP"""
-    import time
-    
-    # Verificar caché (30 segundos TTL)
-    cache_key = 'statistics'
-    if cache_key in _stats_cache:
-        if time.time() - _stats_cache_time.get(cache_key, 0) < 30:
-            return jsonify(_stats_cache[cache_key]), 200
-    
+    """Obtiene estadísticas desde la API"""
     try:
-        # Acceso directo a la base de datos (SIN HTTP - MUCHO MÁS RÁPIDO)
-        with get_api_db_cursor() as cursor:
-            stats = {
-                'total_scans': 0,
-                'active_scans': 0,
-                'unique_machines': 0,
-                'severe_detections': 0,
-                'total_results': 0,
-                'active_tokens': 0,
-                'total_bans': 0
-            }
-            
-            # Consulta optimizada: una sola query
-            try:
-                cursor.execute('''
-                    SELECT 
-                        (SELECT COUNT(*) FROM scans) as total_scans,
-                        (SELECT COUNT(*) FROM scans WHERE status = "running") as active_scans,
-                        (SELECT COUNT(DISTINCT machine_id) FROM scans WHERE machine_id IS NOT NULL AND machine_id != "") as unique_machines,
-                        (SELECT COUNT(*) FROM scan_results WHERE alert_level = "CRITICAL") as severe_detections,
-                        (SELECT COUNT(*) FROM scan_results) as total_results,
-                        (SELECT COUNT(*) FROM scan_tokens WHERE is_active = 1) as active_tokens,
-                        (SELECT COUNT(*) FROM ban_history) as total_bans
-                ''')
-                row = cursor.fetchone()
-                if row:
-                    stats['total_scans'] = row[0] or 0
-                    stats['active_scans'] = row[1] or 0
-                    stats['unique_machines'] = row[2] or 0
-                    stats['severe_detections'] = row[3] or 0
-                    stats['total_results'] = row[4] or 0
-                    stats['active_tokens'] = row[5] or 0
-                    stats['total_bans'] = row[6] or 0
-            except sqlite3.OperationalError:
-                # Fallback: consultas individuales si alguna tabla no existe
-                for query, key in [
-                    ('SELECT COUNT(*) FROM scans', 'total_scans'),
-                    ('SELECT COUNT(*) FROM scans WHERE status = "running"', 'active_scans'),
-                    ('SELECT COUNT(DISTINCT machine_id) FROM scans WHERE machine_id IS NOT NULL AND machine_id != ""', 'unique_machines'),
-                    ('SELECT COUNT(*) FROM scan_results WHERE alert_level = "CRITICAL"', 'severe_detections'),
-                    ('SELECT COUNT(*) FROM scan_results', 'total_results'),
-                    ('SELECT COUNT(*) FROM scan_tokens WHERE is_active = 1', 'active_tokens'),
-                    ('SELECT COUNT(*) FROM ban_history', 'total_bans')
-                ]:
-                    try:
-                        cursor.execute(query)
-                        stats[key] = cursor.fetchone()[0] or 0
-                    except sqlite3.OperationalError:
-                        pass
-            
-            stats['timestamp'] = datetime.datetime.now().isoformat()
-            
-            # Guardar en caché
-            _stats_cache[cache_key] = stats
-            _stats_cache_time[cache_key] = time.time()
-            
-            return jsonify(stats), 200
+        headers = {}
+        if API_KEY:
+            headers['X-API-Key'] = API_KEY
+        response = requests.get(
+            get_api_url('/api/statistics'),
+            headers=headers,
+            timeout=10
+        )
+        if response.status_code == 200:
+            return jsonify(response.json())
+        elif response.status_code == 401:
+            return jsonify({'error': 'API Key inválida. Verifica la configuración.'}), 401
+        else:
+            return jsonify({'error': f'Error al obtener estadísticas: {response.status_code}', 'details': response.text}), 500
+    except requests.exceptions.ConnectionError:
+        error_msg = 'No se pudo conectar a la API.'
+        if IS_RENDER:
+            error_msg += ' En Render, asegúrate de que la API esté configurada correctamente.'
+        else:
+            error_msg += ' Verifica que esté corriendo en http://localhost:5000'
+        return jsonify({'error': error_msg}), 503
+    except requests.exceptions.Timeout:
+        return jsonify({'error': 'Timeout al conectar con la API. La API puede estar sobrecargada.'}), 504
     except Exception as e:
         import traceback
-        print(f"Error en get_statistics: {str(e)}")
+        print(f"Error en create_token: {str(e)}")
         print(traceback.format_exc())
         return jsonify({'error': f'Error inesperado: {str(e)}'}), 500
 
@@ -717,11 +648,20 @@ def api_create_company_token():
     description = data.get('description', '')
     is_admin_token = data.get('is_admin_token', False)
     
+    # Debug: Verificar valores recibidos
+    print(f"DEBUG CREATE TOKEN - Datos recibidos:")
+    print(f"  expires_hours: {expires_hours}")
+    print(f"  description: {description}")
+    print(f"  is_admin_token (raw): {is_admin_token}")
+    print(f"  is_admin_token (type): {type(is_admin_token)}")
+    
     # Asegurar que is_admin_token sea un booleano
     if isinstance(is_admin_token, str):
         is_admin_token = is_admin_token.lower() in ('true', '1', 'yes')
     elif not isinstance(is_admin_token, bool):
         is_admin_token = bool(is_admin_token)
+    
+    print(f"  is_admin_token (final): {is_admin_token}")
     
     result = create_registration_token(
         created_by=session.get('user_id'),
@@ -1032,9 +972,11 @@ def list_tokens():
 @app.route('/api/tokens', methods=['POST'])
 @admin_required
 def create_token():
-    """Crea un nuevo token - OPTIMIZADO"""
+    """Crea un nuevo token - Usa endpoint local en lugar de proxy"""
     try:
+        # Redirigir al endpoint local de administración
         data = request.json or {}
+        print(f"DEBUG create_token: Datos recibidos: {data}")
         
         expires_hours = data.get('expires_hours', data.get('expires_days', 1) * 24)
         description = data.get('description', '')
@@ -1045,6 +987,8 @@ def create_token():
         if not created_by:
             return jsonify({'success': False, 'error': 'Usuario no autenticado'}), 401
         
+        print(f"DEBUG create_token: Creando token con created_by={created_by}, expires_hours={expires_hours}")
+        
         result = create_registration_token(
             created_by=created_by,
             company_id=company_id,
@@ -1052,6 +996,8 @@ def create_token():
             description=description,
             is_admin_token=is_admin_token
         )
+        
+        print(f"DEBUG create_token: Resultado: {result}")
         
         if result['success']:
             return jsonify({
@@ -1557,27 +1503,29 @@ def generate_app():
 
 @app.route('/download/<filename>')
 def download_file(filename):
-    """Endpoint para descargar el ejecutable generado - OPTIMIZADO"""
+    """Endpoint para descargar el ejecutable generado"""
     import os
     from flask import send_file
     
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
-    # Lista de ubicaciones posibles en orden de prioridad (optimizado)
-    possible_paths = [
-        os.path.join(project_root, 'downloads', filename),
-        os.path.join(project_root, 'source', 'dist', filename) if filename == 'MinecraftSSTool.exe' else None,
-        os.path.join(project_root, filename)
-    ]
+    # Buscar en downloads/ primero
+    file_path = os.path.join(project_root, 'downloads', filename)
     
-    # Buscar el primer archivo que exista (evita múltiples checks)
-    file_path = None
-    for path in possible_paths:
-        if path and os.path.exists(path) and os.path.isfile(path):
-            file_path = path
-            break
+    # Si no está en downloads, buscar en source/dist
+    if not os.path.exists(file_path):
+        if filename == 'MinecraftSSTool.exe':
+            exe_path = os.path.join(project_root, 'source', 'dist', 'MinecraftSSTool.exe')
+            if os.path.exists(exe_path):
+                file_path = exe_path
     
-    if file_path:
+    # Si no está en source/dist, buscar en la raíz del proyecto
+    if not os.path.exists(file_path):
+        root_path = os.path.join(project_root, filename)
+        if os.path.exists(root_path):
+            file_path = root_path
+    
+    if os.path.exists(file_path) and os.path.isfile(file_path):
         return send_file(file_path, as_attachment=True, download_name=filename)
     else:
         return jsonify({'error': f'Archivo no encontrado: {filename}'}), 404
