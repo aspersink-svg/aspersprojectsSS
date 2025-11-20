@@ -1331,7 +1331,7 @@ def list_scans():
                         severity_map[scan_id] = {'summary': 'POCO_SOSPECHOSO', 'badge': 'info'}
                     elif total == 0:
                         severity_map[scan_id] = {'summary': 'LIMPIO', 'badge': 'success'}
-        else:
+                    else:
                         severity_map[scan_id] = {'summary': 'NORMAL', 'badge': 'secondary'}
                 
                 # Agregar preview a cada scan
@@ -1339,7 +1339,7 @@ def list_scans():
                     if scan['id'] in severity_map:
                         scan['severity_summary'] = severity_map[scan['id']]['summary']
                         scan['severity_badge'] = severity_map[scan['id']]['badge']
-        else:
+                    else:
                         scan['severity_summary'] = 'LIMPIO' if scan['issues_found'] == 0 else 'SOSPECHOSO'
                         scan['severity_badge'] = 'success' if scan['issues_found'] == 0 else 'warning'
             
