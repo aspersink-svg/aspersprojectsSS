@@ -1067,22 +1067,22 @@ def list_tokens():
                 with get_api_db_cursor() as cursor:
                     # Si es admin, mostrar todos los tokens. Si no, solo los del usuario
                     if is_admin_user:
-                cursor.execute('''
-                    SELECT id, token, created_at, expires_at, used_count, max_uses, 
-                           is_active, created_by, description
-                    FROM scan_tokens
-                    ORDER BY created_at DESC
-                    LIMIT 100
-                ''')
-            else:
-                cursor.execute('''
-                    SELECT id, token, created_at, expires_at, used_count, max_uses, 
-                           is_active, created_by, description
-                    FROM scan_tokens
-                    WHERE created_by = ?
-                    ORDER BY created_at DESC
-                    LIMIT 100
-                ''', (username,))
+                        cursor.execute('''
+                            SELECT id, token, created_at, expires_at, used_count, max_uses, 
+                                   is_active, created_by, description
+                            FROM scan_tokens
+                            ORDER BY created_at DESC
+                            LIMIT 100
+                        ''')
+                    else:
+                        cursor.execute('''
+                            SELECT id, token, created_at, expires_at, used_count, max_uses, 
+                                   is_active, created_by, description
+                            FROM scan_tokens
+                            WHERE created_by = ?
+                            ORDER BY created_at DESC
+                            LIMIT 100
+                        ''', (username,))
             
             tokens = []
             for row in cursor.fetchall():
