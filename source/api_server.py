@@ -676,10 +676,19 @@ def validate_token_endpoint():
 @app.route('/api/tokens', methods=['POST'])
 def create_scan_token():
     """Crea un nuevo token de escaneo - SIN REQUIRE_API_KEY para permitir creación desde web app"""
-    """Crea un nuevo token de escaneo"""
     try:
+        print(f"📥 ===== RECIBIENDO PETICIÓN PARA CREAR TOKEN =====")
+        print(f"📥 Headers recibidos: {dict(request.headers)}")
+        print(f"📥 Método: {request.method}")
+        print(f"📥 Content-Type: {request.content_type}")
+        
         data = request.json or {}
-        print(f"📥 Creando token. Datos recibidos: expires_days={data.get('expires_days')}, max_uses={data.get('max_uses')}, created_by={data.get('created_by')}")
+        if not data:
+            print(f"⚠️ No se recibieron datos JSON, intentando leer como form data...")
+            data = request.form.to_dict() or {}
+        
+        print(f"📥 Datos recibidos: {data}")
+        print(f"📥 expires_days={data.get('expires_days')}, max_uses={data.get('max_uses')}, created_by={data.get('created_by')}")
         
         # Generar token único
         token = secrets.token_urlsafe(32)
