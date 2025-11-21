@@ -207,23 +207,38 @@ def create_user(username, password, email=None, roles=None, company_id=None, cre
     """Crea un nuevo usuario con soporte para múltiples roles y empresas"""
     import json
     
+    print(f"\n{'='*60}")
+    print(f"👤 ===== CREANDO USUARIO ======")
+    print(f"👤 Username: {username}")
+    print(f"👤 Email: {email}")
+    print(f"👤 Roles: {roles}")
+    print(f"👤 Company ID: {company_id}")
+    print(f"👤 Created by: {created_by}")
+    print(f"👤 BD Path: {DATABASE}")
+    print(f"{'='*60}\n")
+    
     try:
         conn = sqlite3.connect(DATABASE)
         cursor = conn.cursor()
+        print(f"✅ Conectado a BD: {DATABASE}")
         
         # Validar límites de empresa si aplica
         if company_id:
+            print(f"📊 Validando límites de empresa {company_id}...")
             # Contar usuarios actuales de la empresa
             cursor.execute('SELECT COUNT(*) FROM users WHERE company_id = ? AND is_active = 1', (company_id,))
             current_users = cursor.fetchone()[0]
+            print(f"📊 Usuarios actuales de la empresa: {current_users}")
             
             # Obtener límite de usuarios de la empresa
             cursor.execute('SELECT max_users FROM companies WHERE id = ?', (company_id,))
             company_data = cursor.fetchone()
             if company_data:
                 max_users = company_data[0]
+                print(f"📊 Límite de usuarios: {max_users}")
                 if current_users >= max_users:
                     conn.close()
+                    print(f"❌ ERROR: Empresa alcanzó límite de usuarios")
                     return {'success': False, 'error': f'La empresa ha alcanzado el límite de {max_users} usuarios'}
             
             # Si es admin de empresa, validar límite de admins
@@ -234,13 +249,16 @@ def create_user(username, password, email=None, roles=None, company_id=None, cre
                     AND roles LIKE "%administrador%"
                 ''', (company_id,))
                 current_admins = cursor.fetchone()[0]
+                print(f"📊 Admins actuales de la empresa: {current_admins}")
                 
                 cursor.execute('SELECT max_admins FROM companies WHERE id = ?', (company_id,))
                 max_admins_data = cursor.fetchone()
                 if max_admins_data:
                     max_admins = max_admins_data[0]
+                    print(f"📊 Límite de admins: {max_admins}")
                     if current_admins >= max_admins:
                         conn.close()
+                        print(f"❌ ERROR: Empresa alcanzó límite de admins")
                         return {'success': False, 'error': f'La empresa ha alcanzado el límite de {max_admins} administradores'}
         
         # Convertir roles a JSON si es necesario
@@ -255,22 +273,57 @@ def create_user(username, password, email=None, roles=None, company_id=None, cre
             roles = [roles]
         
         roles_json = json.dumps(roles)
+        print(f"📝 Roles JSON: {roles_json}")
         
         password_hash = hash_password(password)
         
+        print(f"💾 Insertando usuario en BD...")
         cursor.execute('''
             INSERT INTO users (username, email, password_hash, roles, company_id, created_by)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (username, email, password_hash, roles_json, company_id, created_by))
         
         user_id = cursor.lastrowid
+        print(f"✅ Usuario insertado con ID: {user_id}")
+        
+        # Verificar que se guardó correctamente
+        cursor.execute('SELECT id, username, email, company_id FROM users WHERE id = ?', (user_id,))
+        saved_user = cursor.fetchone()
+        if saved_user:
+            print(f"✅ Usuario verificado en BD: ID={saved_user[0]}, Username={saved_user[1]}, Email={saved_user[2]}, Company={saved_user[3]}")
+        else:
+            print(f"⚠️ ADVERTENCIA: Usuario no encontrado después de insertar")
+        
+        # Contar total de usuarios después de insertar
+        cursor.execute('SELECT COUNT(*) FROM users')
+        total_users = cursor.fetchone()[0]
+        print(f"📊 Total de usuarios en BD: {total_users}")
+        
         conn.commit()
+        print(f"✅ Commit realizado")
+        
+        # Verificar después del commit
+        conn2 = sqlite3.connect(DATABASE)
+        cursor2 = conn2.cursor()
+        cursor2.execute('SELECT COUNT(*) FROM users WHERE id = ?', (user_id,))
+        count_after_commit = cursor2.fetchone()[0]
+        conn2.close()
+        print(f"✅ Usuario verificado después del commit: {count_after_commit} registro(s)")
+        
         conn.close()
         
+        print(f"✅ ===== USUARIO CREADO EXITOSAMENTE ======\n")
         return {'success': True, 'user_id': user_id}
-    except sqlite3.IntegrityError:
+    except sqlite3.IntegrityError as e:
+        print(f"❌ ERROR: Usuario o email ya existe: {e}")
         return {'success': False, 'error': 'Usuario o email ya existe'}
     except Exception as e:
+        import traceback
+        print(f"❌ ERROR inesperado al crear usuario:")
+        print(f"   Error: {str(e)}")
+        print(f"   Traceback:")
+        print(traceback.format_exc())
+        print(f"{'='*60}\n")
         return {'success': False, 'error': str(e)}
 
 def authenticate_user(username, password):
@@ -594,11 +647,19 @@ def list_users(company_id=None):
     """Lista todos los usuarios, opcionalmente filtrados por empresa"""
     import json
     
+    print(f"\n{'='*60}")
+    print(f"📋 ===== LISTANDO USUARIOS ======")
+    print(f"📋 Company ID filter: {company_id}")
+    print(f"📋 BD Path: {DATABASE}")
+    print(f"{'='*60}\n")
+    
     try:
         conn = sqlite3.connect(DATABASE)
         cursor = conn.cursor()
+        print(f"✅ Conectado a BD")
         
         if company_id:
+            print(f"🔍 Filtrando por empresa {company_id}...")
             cursor.execute('''
                 SELECT id, username, email, roles, is_active, created_at, last_login, company_id
                 FROM users
@@ -606,21 +667,25 @@ def list_users(company_id=None):
                 ORDER BY created_at DESC
             ''', (company_id,))
         else:
+            print(f"🔍 Listando todos los usuarios...")
             cursor.execute('''
                 SELECT id, username, email, roles, is_active, created_at, last_login, company_id
                 FROM users
                 ORDER BY created_at DESC
             ''')
         
+        rows = cursor.fetchall()
+        print(f"📊 Usuarios encontrados: {len(rows)}")
+        
         users = []
-        for row in cursor.fetchall():
+        for row in rows:
             # Parsear roles JSON
             try:
                 roles = json.loads(row[3]) if row[3] else ['user']
             except:
                 roles = [row[3]] if row[3] else ['user']
             
-            users.append({
+            user_data = {
                 'id': row[0],
                 'username': row[1],
                 'email': row[2],
@@ -629,11 +694,20 @@ def list_users(company_id=None):
                 'created_at': row[5],
                 'last_login': row[6],
                 'company_id': row[7]
-            })
+            }
+            users.append(user_data)
+            print(f"   - ID: {row[0]}, Username: {row[1]}, Email: {row[2]}, Company: {row[7]}")
         
         conn.close()
+        print(f"✅ ===== LISTADO COMPLETADO: {len(users)} usuarios ======\n")
         return users
     except Exception as e:
+        import traceback
+        print(f"❌ ERROR al listar usuarios:")
+        print(f"   Error: {str(e)}")
+        print(f"   Traceback:")
+        print(traceback.format_exc())
+        print(f"{'='*60}\n")
         return []
 
 # ============================================================
