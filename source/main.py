@@ -2181,19 +2181,29 @@ class MinecraftSSApp:
         return filtered
         
     def load_config(self):
-        """Carga la configuración"""
+        """Carga la configuración desde ubicación persistente"""
         try:
-            # Intentar múltiples ubicaciones
+            import sys
+            
+            # Intentar múltiples ubicaciones (en orden de prioridad)
             possible_paths = []
             
             if getattr(sys, 'frozen', False):
-                # Si está compilado, buscar config.json junto al ejecutable
+                # Si está compilado, buscar config.json en ubicaciones persistentes
                 exe_dir = os.path.dirname(sys.executable)
-                possible_paths = [
-                    os.path.join(exe_dir, 'config.json'),
-                    os.path.join(exe_dir, '..', 'config.json'),
-                    os.path.join(os.getcwd(), 'config.json'),
-                ]
+                
+                # 1. AppData\Roaming (más persistente, no requiere permisos de admin)
+                appdata_roaming = os.path.join(os.environ.get('APPDATA', ''), 'ASPERSProjectsSS', 'config.json')
+                possible_paths.append(appdata_roaming)
+                
+                # 2. Junto al ejecutable
+                possible_paths.append(os.path.join(exe_dir, 'config.json'))
+                
+                # 3. Directorio padre del ejecutable
+                possible_paths.append(os.path.join(exe_dir, '..', 'config.json'))
+                
+                # 4. Directorio actual (fallback)
+                possible_paths.append(os.path.join(os.getcwd(), 'config.json'))
             else:
                 # Si está en desarrollo, buscar en el directorio del script
                 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -2206,14 +2216,30 @@ class MinecraftSSApp:
             
             # Intentar cada ruta
             for config_path in possible_paths:
+                config_path = os.path.abspath(config_path)  # Normalizar ruta
                 if os.path.exists(config_path):
-                    with open(config_path, 'r', encoding='utf-8') as f:
-                        config = json.load(f)
-                        print(f"✅ Config cargado desde: {config_path}")
-                        return config
+                    try:
+                        with open(config_path, 'r', encoding='utf-8') as f:
+                            config = json.load(f)
+                            print(f"✅ Config cargado desde: {config_path}")
+                            # Guardar la ruta para futuras escrituras
+                            self.config_path = config_path
+                            return config
+                    except Exception as e:
+                        print(f"⚠️ Error leyendo config desde {config_path}: {e}")
+                        continue
             
             # Si no se encuentra, usar configuración por defecto
             print("⚠️ config.json no encontrado, usando configuración por defecto")
+            
+            # Determinar ruta por defecto para guardar
+            if getattr(sys, 'frozen', False):
+                appdata_roaming = os.path.join(os.environ.get('APPDATA', ''), 'ASPERSProjectsSS', 'config.json')
+                self.config_path = appdata_roaming
+            else:
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                self.config_path = os.path.join(script_dir, 'config.json')
+            
             return {
                 "discord_webhook": "",
                 "auth_token": "",
@@ -4526,44 +4552,65 @@ class MinecraftSSApp:
                                         self.db_integration.scan_token = token
                                         print(f"✅ Token actualizado en db_integration inmediatamente")
                                     
-                                    # Guardar token en archivo de configuración
+                                    # Guardar token en archivo de configuración (ubicación persistente)
                                     try:
                                         import os
                                         import json
-                                        possible_paths = [
-                                            'config.json',
-                                            os.path.join(os.path.dirname(__file__), 'config.json'),
-                                            os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config.json'),
-                                            os.path.join(os.getcwd(), 'config.json')
-                                        ]
+                                        import sys
                                         
-                                        config_path = None
-                                        for path in possible_paths:
-                                            if os.path.exists(path):
-                                                config_path = path
-                                                break
-                                        
-                                        if not config_path:
-                                            # Crear en el directorio actual
-                                            config_path = 'config.json'
+                                        # Determinar ubicación persistente para config.json
+                                        if getattr(sys, 'frozen', False):
+                                            # Si está compilado, guardar junto al ejecutable o en AppData\Roaming
+                                            exe_dir = os.path.dirname(sys.executable)
+                                            # Intentar guardar junto al .exe primero
+                                            config_path = os.path.join(exe_dir, 'config.json')
+                                            
+                                            # Si no se puede escribir ahí (permisos), usar AppData\Roaming
+                                            try:
+                                                # Probar si podemos escribir
+                                                test_file = os.path.join(exe_dir, '.test_write')
+                                                with open(test_file, 'w') as f:
+                                                    f.write('test')
+                                                os.remove(test_file)
+                                            except:
+                                                # No se puede escribir, usar AppData\Roaming
+                                                appdata_roaming = os.path.join(os.environ.get('APPDATA', ''), 'ASPERSProjectsSS')
+                                                os.makedirs(appdata_roaming, exist_ok=True)
+                                                config_path = os.path.join(appdata_roaming, 'config.json')
+                                                print(f"📁 Guardando config en AppData\Roaming (no se puede escribir junto al .exe)")
+                                        else:
+                                            # Si está en desarrollo, buscar en el directorio del script
+                                            script_dir = os.path.dirname(os.path.abspath(__file__))
+                                            config_path = os.path.join(script_dir, 'config.json')
                                         
                                         # Leer config existente para no sobrescribir otros valores
                                         try:
-                                            with open(config_path, 'r', encoding='utf-8') as f:
-                                                existing_config = json.load(f)
-                                            existing_config['scan_token'] = token
-                                            existing_config['api_url'] = self.config.get('api_url', existing_config.get('api_url', 'https://ssapi-cfni.onrender.com'))
-                                            existing_config['web_url'] = self.config.get('web_url', existing_config.get('web_url', 'https://aspersprojectsss.onrender.com'))
-                                            self.config = existing_config
-                                        except:
-                                            # Si no existe, usar el config actual
-                                            pass
+                                            if os.path.exists(config_path):
+                                                with open(config_path, 'r', encoding='utf-8') as f:
+                                                    existing_config = json.load(f)
+                                                existing_config['scan_token'] = token
+                                                existing_config['api_url'] = self.config.get('api_url', existing_config.get('api_url', 'https://ssapi-cfni.onrender.com'))
+                                                existing_config['web_url'] = self.config.get('web_url', existing_config.get('web_url', 'https://aspersprojectsss.onrender.com'))
+                                                self.config = existing_config
+                                            else:
+                                                # Si no existe, usar el config actual y agregar token
+                                                self.config['scan_token'] = token
+                                        except Exception as read_error:
+                                            # Si falla al leer, usar el config actual
+                                            print(f"⚠️ Error leyendo config existente: {read_error}")
+                                            self.config['scan_token'] = token
                                         
+                                        # Guardar config
                                         with open(config_path, 'w', encoding='utf-8') as f:
                                             json.dump(self.config, f, indent=2, ensure_ascii=False)
                                         print(f"💾 Token guardado en {config_path}")
+                                        
+                                        # También actualizar self.config_path para futuras lecturas
+                                        self.config_path = config_path
                                     except Exception as save_error:
+                                        import traceback
                                         print(f"⚠️ No se pudo guardar token en archivo: {str(save_error)}")
+                                        print(f"   Traceback: {traceback.format_exc()}")
                                     
                                     return True  # Token válido
                                 else:
