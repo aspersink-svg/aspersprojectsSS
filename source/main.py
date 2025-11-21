@@ -500,6 +500,20 @@ class MinecraftSSApp:
         # Rutas y procesos legítimos a excluir (whitelist)
         self.whitelist_paths = self.load_whitelist()
         
+        # Integración con Base de Datos y API (DEBE inicializarse ANTES de legitimate_patterns)
+        self.db_integration = None
+        try:
+            from db_integration import DatabaseIntegration
+            api_url = self.config.get('api_url', 'https://ssapi-cfni.onrender.com')
+            scan_token = self.config.get('scan_token', '')
+            self.db_integration = DatabaseIntegration(api_url=api_url, scan_token=scan_token)
+            self.db_integration.app = self  # Pasar referencia de la app para acceso a username detectado
+            print("✅ Integración con BD inicializada")
+        except ImportError:
+            print("⚠️ Módulo db_integration no disponible - continuando sin integración BD")
+        except Exception as e:
+            print(f"⚠️ Error al inicializar integración BD: {e}")
+        
         # Sistema de patrones legítimos (aprende de feedback)
         self.legitimate_patterns = None
         try:
@@ -535,19 +549,7 @@ class MinecraftSSApp:
         # Cache de análisis de archivos para evitar re-analizar
         self.file_analysis_cache = {}
         
-        # Integración con Base de Datos y API
-        self.db_integration = None
-        try:
-            from db_integration import DatabaseIntegration
-            api_url = self.config.get('api_url', 'https://ssapi-cfni.onrender.com')
-            scan_token = self.config.get('scan_token', '')
-            self.db_integration = DatabaseIntegration(api_url=api_url, scan_token=scan_token)
-            self.db_integration.app = self  # Pasar referencia de la app para acceso a username detectado
-            print("✅ Integración con BD inicializada")
-        except ImportError:
-            print("⚠️ Módulo db_integration no disponible - continuando sin integración BD")
-        except Exception as e:
-            print(f"⚠️ Error al inicializar integración BD: {e}")
+        # NOTA: db_integration ya fue inicializado arriba, antes de legitimate_patterns
         
         # Analizador de IA
         self.ai_analyzer = None
