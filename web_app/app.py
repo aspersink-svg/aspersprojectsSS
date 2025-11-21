@@ -1313,9 +1313,10 @@ def list_scans():
         if time.time() - _stats_cache_time.get(cache_key, 0) < 10:
             return jsonify(_stats_cache[cache_key]), 200
     
-    # Intentar acceso directo a BD primero (más rápido)
-    if API_DB_AVAILABLE_LOCALLY:
+    # Intentar acceso directo a BD primero (más rápido) - SOLO si NO estamos en Render
+    if API_DB_AVAILABLE_LOCALLY and not IS_RENDER:
         try:
+            print(f"🔄 Intentando obtener escaneos directamente de la BD local...")
             with get_api_db_cursor() as cursor:
                 cursor.execute('''
                     SELECT id, scan_token, started_at, completed_at, status,
@@ -1341,6 +1342,8 @@ def list_scans():
                         'scan_duration': row[7],
                         'machine_name': row[8]
                     })
+                
+                print(f"📊 Escaneos encontrados en BD local: {len(scans)}")
                 
                 # Calcular preview de severidad (una sola query optimizada)
                 if scan_ids:
@@ -1385,15 +1388,27 @@ def list_scans():
                 _stats_cache[cache_key] = result
                 _stats_cache_time[cache_key] = time.time()
                 
+                print(f"✅ Escaneos obtenidos directamente de BD. Total: {len(scans)}")
                 return jsonify(result), 200
+        except FileNotFoundError as fnfe:
+            print(f"⚠️ Error: {fnfe}. La BD de la API no está disponible localmente. Intentando vía HTTP...")
         except Exception as e:
-            print(f"⚠️ Error accediendo BD directamente en list_scans: {e}")
+            import traceback
+            print(f"⚠️ Error accediendo BD directamente en list_scans: {str(e)}")
+            print(traceback.format_exc())
             print("🔄 Intentando vía HTTP...")
+    else:
+        if IS_RENDER:
+            print(f"🌐 Estamos en Render, usando HTTP para obtener escaneos...")
+        else:
+            print(f"⚠️ API_DB_AVAILABLE_LOCALLY es False, usando HTTP...")
     
     # Fallback: usar HTTP para obtener escaneos desde la API
+    print(f"🔄 Obteniendo escaneos vía HTTP desde: {get_api_url('/api/scans')}")
     try:
         api_url = get_api_url('/api/scans')
-        print(f"🔄 Obteniendo escaneos vía HTTP desde: {api_url}")
+        print(f"🌐 URL completa: {api_url}")
+        print(f"🌐 Parámetros: limit={limit}, offset={offset}")
         
         headers = {}
         if API_KEY:
@@ -1406,31 +1421,44 @@ def list_scans():
             api_url,
             params={'limit': limit, 'offset': offset},
             headers=headers,
-            timeout=10
+            timeout=15  # Aumentado timeout para Render
         )
         
         print(f"📡 Respuesta de API: Status {response.status_code}")
+        print(f"📡 Headers de respuesta: {dict(response.headers)}")
         
         if response.status_code == 200:
             result = response.json()
             scans_count = len(result.get('scans', []))
             print(f"✅ Obtenidos {scans_count} escaneos desde la API")
+            
+            # Log detallado de los primeros escaneos
+            if scans_count > 0:
+                print(f"📋 Primeros escaneos recibidos:")
+                for i, scan in enumerate(result.get('scans', [])[:3]):
+                    print(f"   [{i+1}] Scan ID: {scan.get('id')}, Machine: {scan.get('machine_name')}, Issues: {scan.get('issues_found')}, Status: {scan.get('status')}")
+            else:
+                print(f"⚠️ La API devolvió 200 pero sin escaneos en la respuesta")
+                print(f"📋 Respuesta completa: {result}")
+            
             # Guardar en caché
             _stats_cache[cache_key] = result
             _stats_cache_time[cache_key] = time.time()
             return jsonify(result), 200
         else:
-            print(f"❌ Error obteniendo escaneos: {response.status_code} - {response.text[:200]}")
-            return jsonify({'error': f'Error obteniendo escaneos: {response.text}'}), response.status_code
-    except requests.exceptions.Timeout:
-        print(f"❌ Timeout al obtener escaneos desde la API")
+            print(f"❌ Error obteniendo escaneos: {response.status_code}")
+            print(f"❌ Respuesta completa: {response.text[:500]}")
+            return jsonify({'error': f'Error obteniendo escaneos: {response.status_code}', 'scans': []}), response.status_code
+    except requests.exceptions.Timeout as te:
+        print(f"❌ Timeout al obtener escaneos desde la API: {te}")
         return jsonify({'error': 'Timeout al conectar con la API', 'scans': []}), 504
-    except requests.exceptions.ConnectionError as e:
-        print(f"❌ Error de conexión con la API: {e}")
-        return jsonify({'error': f'No se pudo conectar con la API: {str(e)}', 'scans': []}), 503
+    except requests.exceptions.ConnectionError as ce:
+        print(f"❌ Error de conexión con la API: {ce}")
+        return jsonify({'error': f'No se pudo conectar con la API: {str(ce)}', 'scans': []}), 503
     except Exception as e:
         import traceback
-        print(f"❌ Error en list_scans (HTTP): {str(e)}")
+        print(f"❌ Error inesperado en list_scans (HTTP): {str(e)}")
+        print(f"❌ Traceback:")
         print(traceback.format_exc())
         return jsonify({'error': f'Error inesperado: {str(e)}', 'scans': []}), 500
 
