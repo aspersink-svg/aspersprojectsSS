@@ -1392,30 +1392,47 @@ def list_scans():
     
     # Fallback: usar HTTP para obtener escaneos desde la API
     try:
+        api_url = get_api_url('/api/scans')
+        print(f"🔄 Obteniendo escaneos vía HTTP desde: {api_url}")
+        
         headers = {}
         if API_KEY:
             headers['X-API-Key'] = API_KEY
+            print(f"🔑 Enviando API Key en headers")
+        else:
+            print(f"⚠️ No hay API_KEY configurada, la API puede rechazar la petición")
         
         response = requests.get(
-            get_api_url('/api/scans'),
+            api_url,
             params={'limit': limit, 'offset': offset},
             headers=headers,
             timeout=10
         )
         
+        print(f"📡 Respuesta de API: Status {response.status_code}")
+        
         if response.status_code == 200:
             result = response.json()
+            scans_count = len(result.get('scans', []))
+            print(f"✅ Obtenidos {scans_count} escaneos desde la API")
             # Guardar en caché
             _stats_cache[cache_key] = result
             _stats_cache_time[cache_key] = time.time()
             return jsonify(result), 200
         else:
+            print(f"❌ Error obteniendo escaneos: {response.status_code} - {response.text[:200]}")
             return jsonify({'error': f'Error obteniendo escaneos: {response.text}'}), response.status_code
+    except requests.exceptions.Timeout:
+        print(f"❌ Timeout al obtener escaneos desde la API")
+        return jsonify({'error': 'Timeout al conectar con la API', 'scans': []}), 504
+    except requests.exceptions.ConnectionError as e:
+        print(f"❌ Error de conexión con la API: {e}")
+        return jsonify({'error': f'No se pudo conectar con la API: {str(e)}', 'scans': []}), 503
     except Exception as e:
         import traceback
         print(f"❌ Error en list_scans (HTTP): {str(e)}")
         print(traceback.format_exc())
-        return jsonify({'error': f'Error inesperado: {str(e)}'}), 500
+        return jsonify({'error': f'Error inesperado: {str(e)}', 'scans': []}), 500
 
 @app.route('/api/scans/<int:scan_id>', methods=['GET'])
 @login_required
@@ -1501,24 +1518,38 @@ def get_scan(scan_id):
     
     # Fallback: usar HTTP para obtener escaneo desde la API
     try:
+        api_url = get_api_url(f'/api/scans/{scan_id}')
+        print(f"🔄 Obteniendo escaneo {scan_id} vía HTTP desde: {api_url}")
+        
         headers = {}
         if API_KEY:
             headers['X-API-Key'] = API_KEY
         
         response = requests.get(
-            get_api_url(f'/api/scans/{scan_id}'),
+            api_url,
             headers=headers,
             timeout=10
         )
         
+        print(f"📡 Respuesta de API para scan {scan_id}: Status {response.status_code}")
+        
         if response.status_code == 200:
             scan = response.json()
+            results_count = len(scan.get('results', []))
+            print(f"✅ Obtenido escaneo {scan_id} con {results_count} resultados desde la API")
             # Guardar en caché
             _stats_cache[cache_key] = scan
             _stats_cache_time[cache_key] = time.time()
             return jsonify(scan), 200
         else:
+            print(f"❌ Error obteniendo escaneo {scan_id}: {response.status_code} - {response.text[:200]}")
             return jsonify({'error': f'Error obteniendo escaneo: {response.text}'}), response.status_code
+    except requests.exceptions.Timeout:
+        print(f"❌ Timeout al obtener escaneo {scan_id} desde la API")
+        return jsonify({'error': 'Timeout al conectar con la API'}), 504
+    except requests.exceptions.ConnectionError as e:
+        print(f"❌ Error de conexión con la API: {e}")
+        return jsonify({'error': f'No se pudo conectar con la API: {str(e)}'}), 503
     except Exception as e:
         import traceback
         print(f"❌ Error en get_scan (HTTP): {str(e)}")
