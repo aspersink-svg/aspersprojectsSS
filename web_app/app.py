@@ -46,15 +46,15 @@ IS_RENDER = bool(RENDER_EXTERNAL_URL)
 
 if IS_RENDER:
     # En Render, verificar si hay una API_URL configurada (servicio separado)
-    # Si no, asumir que la API está en el mismo servidor
+    # Por defecto, usar la URL de la API en Render
     api_url_env = os.environ.get('API_URL')
     if api_url_env:
-        # API en servicio separado de Render
+        # API en servicio separado de Render (configurado explícitamente)
         API_BASE_URL = api_url_env.rstrip('/')
     else:
-        # API en el mismo servidor (mismo servicio)
-        base_url = RENDER_EXTERNAL_URL.rstrip('/')
-        API_BASE_URL = base_url
+        # Por defecto en Render, usar la API separada
+        API_BASE_URL = 'https://ssapi-cfni.onrender.com'
+        print(f"⚠️ API_URL no configurada en Render, usando por defecto: {API_BASE_URL}")
 else:
     # En desarrollo local, usar localhost:5000
     API_BASE_URL = os.environ.get('API_URL', 'http://localhost:5000')
@@ -75,12 +75,8 @@ def get_api_url(endpoint):
     if api_url_env:
         return f"{api_url_env.rstrip('/')}/{endpoint}"
     
-    # Si estamos en Render y no hay API_URL configurado, usar la URL base
-    if IS_RENDER:
-        return f"{API_BASE_URL}/{endpoint}"
-    else:
-        # En desarrollo local, usar API_BASE_URL (que es localhost:5000)
-        return f"{API_BASE_URL}/{endpoint}"
+    # Usar API_BASE_URL (que ya tiene el valor correcto según el entorno)
+    return f"{API_BASE_URL}/{endpoint}"
 
 def require_api_key(f):
     """Decorador para requerir API key"""
@@ -1104,29 +1100,37 @@ def list_tokens():
                 print(f"Error accediendo BD local, usando HTTP: {str(e)}")
                 # Continuar con HTTP si falla acceso local
         
-        # Si no está disponible localmente (Render con servicios separados), usar HTTP
+        # Si no está disponible localmente (Render con servicios separados), usar HTTP con timeout corto
         headers = {}
         if API_KEY:
             headers['X-API-Key'] = API_KEY
         
-        response = requests.get(
-            get_api_url('/api/tokens'),
-            headers=headers,
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            data = response.json()
-            tokens = data.get('tokens', [])
+        try:
+            response = requests.get(
+                get_api_url('/api/tokens'),
+                headers=headers,
+                timeout=5  # Timeout corto para no ralentizar la página
+            )
             
-            # Filtrar por usuario si no es admin
-            if not is_admin_user:
-                tokens = [t for t in tokens if t.get('created_by') == username]
-            
-            return jsonify({'success': True, 'tokens': tokens})
-        else:
-            error_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {'error': response.text}
-            return jsonify({'success': False, 'error': error_data.get('error', f'Error {response.status_code}')}), response.status_code
+            if response.status_code == 200:
+                data = response.json()
+                tokens = data.get('tokens', [])
+                
+                # Filtrar por usuario si no es admin
+                if not is_admin_user:
+                    tokens = [t for t in tokens if t.get('created_by') == username]
+                
+                return jsonify({'success': True, 'tokens': tokens})
+            else:
+                # Si hay error, retornar lista vacía en lugar de fallar
+                print(f"⚠️ Error obteniendo tokens: {response.status_code}")
+                return jsonify({'success': True, 'tokens': []})
+        except requests.exceptions.Timeout:
+            print(f"⏱️ Timeout obteniendo tokens, retornando lista vacía")
+            return jsonify({'success': True, 'tokens': []})
+        except Exception as e:
+            print(f"⚠️ Error obteniendo tokens: {str(e)}, retornando lista vacía")
+            return jsonify({'success': True, 'tokens': []})
             
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
