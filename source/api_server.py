@@ -917,10 +917,36 @@ def start_scan():
 @app.route('/api/scans/<int:scan_id>/results', methods=['POST'])
 def submit_scan_results(scan_id):
     """Recibe y almacena los resultados - OPTIMIZADO CON BATCH INSERT"""
+    print(f"\n{'='*60}")
+    print(f"📥 ===== RECIBIENDO RESULTADOS DE ESCANEO ======")
+    print(f"📥 Scan ID: {scan_id}")
+    print(f"📥 IP del cliente: {request.remote_addr}")
+    print(f"📥 User-Agent: {request.headers.get('User-Agent', 'N/A')}")
+    print(f"{'='*60}\n")
+    
     data = request.json
+    if not data:
+        print(f"❌ ERROR: No se recibieron datos JSON")
+        return jsonify({'error': 'No se recibieron datos'}), 400
+    
+    print(f"📥 Datos recibidos:")
+    print(f"   - Status: {data.get('status', 'N/A')}")
+    print(f"   - Total archivos escaneados: {data.get('total_files_scanned', 0)}")
+    print(f"   - Issues encontrados: {data.get('issues_found', 0)}")
+    print(f"   - Duración: {data.get('scan_duration', 0)}s")
+    print(f"   - Cantidad de resultados: {len(data.get('results', []))}")
     
     try:
         with get_db_cursor() as cursor:
+            # Verificar que el escaneo existe
+            cursor.execute('SELECT id, status FROM scans WHERE id = ?', (scan_id,))
+            scan_row = cursor.fetchone()
+            if not scan_row:
+                print(f"❌ ERROR: Scan ID {scan_id} no existe en la BD")
+                return jsonify({'error': f'Escaneo {scan_id} no encontrado'}), 404
+            
+            print(f"✅ Scan encontrado en BD - Status actual: {scan_row[1]}")
+            
             # Actualizar estado del escaneo
             cursor.execute('''
                 UPDATE scans 
@@ -934,13 +960,15 @@ def submit_scan_results(scan_id):
                 data.get('scan_duration', 0),
                 scan_id
             ))
+            print(f"✅ Estado del escaneo actualizado")
             
             # Insertar resultados en batch (mucho más rápido)
             results = data.get('results', [])
             if results:
+                print(f"📥 Preparando {len(results)} resultados para insertar...")
                 # Preparar datos para batch insert
                 batch_data = []
-                for result in results:
+                for idx, result in enumerate(results):
                     batch_data.append((
                         scan_id,
                         result.get('tipo', ''),
@@ -955,6 +983,8 @@ def submit_scan_results(scan_id):
                         result.get('ai_analysis', ''),
                         result.get('ai_confidence', 0)
                     ))
+                    if idx < 3:  # Mostrar primeros 3 resultados como ejemplo
+                        print(f"   Resultado {idx+1}: {result.get('nombre', 'N/A')} - {result.get('tipo', 'N/A')}")
                 
                 # Batch insert (mucho más rápido que inserts individuales)
                 cursor.executemany('''
@@ -964,14 +994,29 @@ def submit_scan_results(scan_id):
                         file_hash, ai_analysis, ai_confidence
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', batch_data)
+                
+                # Verificar cuántos resultados se insertaron
+                cursor.execute('SELECT COUNT(*) FROM scan_results WHERE scan_id = ?', (scan_id,))
+                total_inserted = cursor.fetchone()[0]
+                print(f"✅ {len(results)} resultados insertados. Total en BD para este scan: {total_inserted}")
+            else:
+                print(f"⚠️ No hay resultados para insertar (lista vacía)")
             
             # Limpiar caché relacionado
             clear_cache('statistics')
             clear_cache(f'scan_{scan_id}')
             clear_cache('scans_list')
+            print(f"✅ Caché limpiado")
         
+        print(f"✅ ===== RESULTADOS ALMACENADOS EXITOSAMENTE ======\n")
         return jsonify({'success': True, 'message': 'Resultados almacenados'})
     except Exception as e:
+        import traceback
+        print(f"\n❌ ===== ERROR ALMACENANDO RESULTADOS ======")
+        print(f"❌ Error: {str(e)}")
+        print(f"❌ Traceback:")
+        print(traceback.format_exc())
+        print(f"{'='*60}\n")
         return jsonify({'error': f'Error almacenando resultados: {str(e)}'}), 500
 
 @app.route('/api/scans/<int:scan_id>', methods=['GET'])

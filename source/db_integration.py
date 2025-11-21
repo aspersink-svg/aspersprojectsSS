@@ -105,9 +105,19 @@ class DatabaseIntegration:
     
     def submit_results(self, issues_found, total_files_scanned, scan_duration):
         """Envía resultados del escaneo a la API"""
+        print(f"\n{'='*60}")
+        print(f"📤 ===== ENVIANDO RESULTADOS A LA API ======")
+        print(f"📤 API URL: {self.api_url}")
+        print(f"📤 Scan Token: {self.scan_token[:20] + '...' if self.scan_token else 'NO CONFIGURADO'}")
+        print(f"📤 Scan ID: {self.scan_id}")
+        print(f"📤 Issues encontrados: {len(issues_found)}")
+        print(f"📤 Archivos escaneados: {total_files_scanned}")
+        print(f"📤 Duración: {scan_duration}s")
+        print(f"{'='*60}\n")
+        
         # Verificar que tenemos token antes de intentar enviar
         if not self.scan_token:
-            print("⚠️ No hay token de escaneo configurado")
+            print("❌ ERROR: No hay token de escaneo configurado")
             print("💡 Por favor, autentícate primero con un token válido")
             return False
         
@@ -116,6 +126,7 @@ class DatabaseIntegration:
             if not self.start_scan():
                 print("❌ No se pudo iniciar el escaneo en la API")
                 return False
+            print(f"✅ Escaneo iniciado - Scan ID: {self.scan_id}")
         
         try:
             # Preparar resultados para la API
@@ -136,26 +147,58 @@ class DatabaseIntegration:
                     'ai_confidence': issue.get('ai_confidence', 0)
                 })
             
+            payload = {
+                'status': 'completed',
+                'total_files_scanned': total_files_scanned,
+                'issues_found': len(issues_found),
+                'scan_duration': scan_duration,
+                'results': results
+            }
+            
+            url = f"{self.api_url}/api/scans/{self.scan_id}/results"
+            print(f"📤 Enviando POST a: {url}")
+            print(f"📤 Payload: {len(results)} resultados, {total_files_scanned} archivos")
+            
             response = requests.post(
-                f"{self.api_url}/api/scans/{self.scan_id}/results",
-                json={
-                    'status': 'completed',
-                    'total_files_scanned': total_files_scanned,
-                    'issues_found': len(issues_found),
-                    'scan_duration': scan_duration,
-                    'results': results
-                },
+                url,
+                json=payload,
                 timeout=30
             )
             
+            print(f"📤 Respuesta recibida:")
+            print(f"   - Status Code: {response.status_code}")
+            print(f"   - Response: {response.text[:200]}")
+            
             if response.status_code == 200:
-                print(f"✅ Resultados enviados a API - {len(issues_found)} issues")
+                print(f"✅ Resultados enviados exitosamente a API - {len(issues_found)} issues")
+                print(f"{'='*60}\n")
                 return True
             else:
-                print(f"❌ Error al enviar resultados: {response.text}")
+                print(f"❌ Error al enviar resultados:")
+                print(f"   - Status: {response.status_code}")
+                print(f"   - Response: {response.text}")
+                print(f"{'='*60}\n")
                 return False
+        except requests.exceptions.Timeout:
+            print(f"❌ ERROR: Timeout al conectar con la API (30s)")
+            print(f"   - URL: {self.api_url}")
+            print(f"   - Esto puede indicar que la API está lenta o no responde")
+            print(f"{'='*60}\n")
+            return False
+        except requests.exceptions.ConnectionError as e:
+            print(f"❌ ERROR: No se pudo conectar con la API")
+            print(f"   - URL: {self.api_url}")
+            print(f"   - Error: {str(e)}")
+            print(f"   - Verifica que la API esté corriendo y accesible")
+            print(f"{'='*60}\n")
+            return False
         except Exception as e:
-            print(f"❌ Error de conexión con API: {e}")
+            import traceback
+            print(f"❌ ERROR inesperado al enviar resultados:")
+            print(f"   - Error: {str(e)}")
+            print(f"   - Traceback:")
+            print(traceback.format_exc())
+            print(f"{'='*60}\n")
             return False
     
     def get_ai_analysis(self, issue):

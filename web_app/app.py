@@ -1301,7 +1301,7 @@ def delete_token(token_id):
 @app.route('/api/scans', methods=['GET'])
 @login_required
 def list_scans():
-    """Lista escaneos - OPTIMIZADO: Acceso directo a BD sin HTTP"""
+    """Lista escaneos - Usa BD directa si está disponible, sino HTTP"""
     import time
     
     limit = request.args.get('limit', 50, type=int)
@@ -1313,88 +1313,114 @@ def list_scans():
         if time.time() - _stats_cache_time.get(cache_key, 0) < 10:
             return jsonify(_stats_cache[cache_key]), 200
     
-    try:
-        # Acceso directo a BD (SIN HTTP - MUCHO MÁS RÁPIDO)
-        with get_api_db_cursor() as cursor:
-            cursor.execute('''
-                SELECT id, scan_token, started_at, completed_at, status,
-                       total_files_scanned, issues_found, scan_duration, machine_name
-                FROM scans
-                ORDER BY started_at DESC
-                LIMIT ? OFFSET ?
-            ''', (limit, offset))
-            
-            scans = []
-            scan_ids = []
-            for row in cursor.fetchall():
-                scan_id = row[0]
-                scan_ids.append(scan_id)
-                scans.append({
-                    'id': scan_id,
-                    'scan_token': row[1],
-                    'started_at': row[2],
-                    'completed_at': row[3],
-                    'status': row[4],
-                    'total_files_scanned': row[5],
-                    'issues_found': row[6],
-                    'scan_duration': row[7],
-                    'machine_name': row[8]
-                })
-            
-            # Calcular preview de severidad (una sola query optimizada)
-            if scan_ids:
-                placeholders = ','.join(['?'] * len(scan_ids))
-                cursor.execute(f'''
-                    SELECT scan_id, 
-                           SUM(CASE WHEN alert_level = 'CRITICAL' THEN 1 ELSE 0 END) as critical,
-                           SUM(CASE WHEN alert_level IN ('SOSPECHOSO', 'HACKS') THEN 1 ELSE 0 END) as suspicious,
-                           SUM(CASE WHEN alert_level = 'POCO_SOSPECHOSO' THEN 1 ELSE 0 END) as low,
-                           COUNT(*) as total
-                    FROM scan_results
-                    WHERE scan_id IN ({placeholders})
-                    GROUP BY scan_id
-                ''', scan_ids)
+    # Intentar acceso directo a BD primero (más rápido)
+    if API_DB_AVAILABLE_LOCALLY:
+        try:
+            with get_api_db_cursor() as cursor:
+                cursor.execute('''
+                    SELECT id, scan_token, started_at, completed_at, status,
+                           total_files_scanned, issues_found, scan_duration, machine_name
+                    FROM scans
+                    ORDER BY started_at DESC
+                    LIMIT ? OFFSET ?
+                ''', (limit, offset))
                 
-                severity_map = {}
+                scans = []
+                scan_ids = []
                 for row in cursor.fetchall():
-                    scan_id, critical, suspicious, low, total = row
-                    if critical > 0:
-                        severity_map[scan_id] = {'summary': 'CRITICO', 'badge': 'danger'}
-                    elif suspicious > 0:
-                        severity_map[scan_id] = {'summary': 'SOSPECHOSO', 'badge': 'warning'}
-                    elif low > 0:
-                        severity_map[scan_id] = {'summary': 'POCO_SOSPECHOSO', 'badge': 'info'}
-                    elif total == 0:
-                        severity_map[scan_id] = {'summary': 'LIMPIO', 'badge': 'success'}
-                    else:
-                        severity_map[scan_id] = {'summary': 'NORMAL', 'badge': 'secondary'}
+                    scan_id = row[0]
+                    scan_ids.append(scan_id)
+                    scans.append({
+                        'id': scan_id,
+                        'scan_token': row[1],
+                        'started_at': row[2],
+                        'completed_at': row[3],
+                        'status': row[4],
+                        'total_files_scanned': row[5],
+                        'issues_found': row[6],
+                        'scan_duration': row[7],
+                        'machine_name': row[8]
+                    })
                 
-                # Agregar preview a cada scan
-                for scan in scans:
-                    if scan['id'] in severity_map:
-                        scan['severity_summary'] = severity_map[scan['id']]['summary']
-                        scan['severity_badge'] = severity_map[scan['id']]['badge']
-                    else:
-                        scan['severity_summary'] = 'LIMPIO' if scan['issues_found'] == 0 else 'SOSPECHOSO'
-                        scan['severity_badge'] = 'success' if scan['issues_found'] == 0 else 'warning'
-            
-            result = {'scans': scans}
-            
+                # Calcular preview de severidad (una sola query optimizada)
+                if scan_ids:
+                    placeholders = ','.join(['?'] * len(scan_ids))
+                    cursor.execute(f'''
+                        SELECT scan_id, 
+                               SUM(CASE WHEN alert_level = 'CRITICAL' THEN 1 ELSE 0 END) as critical,
+                               SUM(CASE WHEN alert_level IN ('SOSPECHOSO', 'HACKS') THEN 1 ELSE 0 END) as suspicious,
+                               SUM(CASE WHEN alert_level = 'POCO_SOSPECHOSO' THEN 1 ELSE 0 END) as low,
+                               COUNT(*) as total
+                        FROM scan_results
+                        WHERE scan_id IN ({placeholders})
+                        GROUP BY scan_id
+                    ''', scan_ids)
+                    
+                    severity_map = {}
+                    for row in cursor.fetchall():
+                        scan_id, critical, suspicious, low, total = row
+                        if critical > 0:
+                            severity_map[scan_id] = {'summary': 'CRITICO', 'badge': 'danger'}
+                        elif suspicious > 0:
+                            severity_map[scan_id] = {'summary': 'SOSPECHOSO', 'badge': 'warning'}
+                        elif low > 0:
+                            severity_map[scan_id] = {'summary': 'POCO_SOSPECHOSO', 'badge': 'info'}
+                        elif total == 0:
+                            severity_map[scan_id] = {'summary': 'LIMPIO', 'badge': 'success'}
+                        else:
+                            severity_map[scan_id] = {'summary': 'NORMAL', 'badge': 'secondary'}
+                    
+                    # Agregar preview a cada scan
+                    for scan in scans:
+                        if scan['id'] in severity_map:
+                            scan['severity_summary'] = severity_map[scan['id']]['summary']
+                            scan['severity_badge'] = severity_map[scan['id']]['badge']
+                        else:
+                            scan['severity_summary'] = 'LIMPIO' if scan['issues_found'] == 0 else 'SOSPECHOSO'
+                            scan['severity_badge'] = 'success' if scan['issues_found'] == 0 else 'warning'
+                
+                result = {'scans': scans}
+                
+                # Guardar en caché
+                _stats_cache[cache_key] = result
+                _stats_cache_time[cache_key] = time.time()
+                
+                return jsonify(result), 200
+        except Exception as e:
+            print(f"⚠️ Error accediendo BD directamente en list_scans: {e}")
+            print("🔄 Intentando vía HTTP...")
+    
+    # Fallback: usar HTTP para obtener escaneos desde la API
+    try:
+        headers = {}
+        if API_KEY:
+            headers['X-API-Key'] = API_KEY
+        
+        response = requests.get(
+            get_api_url('/api/scans'),
+            params={'limit': limit, 'offset': offset},
+            headers=headers,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
             # Guardar en caché
             _stats_cache[cache_key] = result
             _stats_cache_time[cache_key] = time.time()
-            
             return jsonify(result), 200
+        else:
+            return jsonify({'error': f'Error obteniendo escaneos: {response.text}'}), response.status_code
     except Exception as e:
         import traceback
-        print(f"Error en list_scans: {str(e)}")
+        print(f"❌ Error en list_scans (HTTP): {str(e)}")
         print(traceback.format_exc())
         return jsonify({'error': f'Error inesperado: {str(e)}'}), 500
 
 @app.route('/api/scans/<int:scan_id>', methods=['GET'])
 @login_required
 def get_scan(scan_id):
-    """Obtiene un escaneo específico - OPTIMIZADO: Acceso directo a BD sin HTTP"""
+    """Obtiene un escaneo específico - Usa BD directa si está disponible, sino HTTP"""
     import time
     
     # Caché por scan_id (5 segundos TTL)
@@ -1403,74 +1429,99 @@ def get_scan(scan_id):
         if time.time() - _stats_cache_time.get(cache_key, 0) < 5:
             return jsonify(_stats_cache[cache_key]), 200
     
+    # Intentar acceso directo a BD primero (más rápido)
+    if API_DB_AVAILABLE_LOCALLY:
+        try:
+            with get_api_db_cursor() as cursor:
+                cursor.execute('''
+                    SELECT id, token_id, scan_token, started_at, completed_at, status,
+                           total_files_scanned, issues_found, scan_duration, machine_id, machine_name,
+                           ip_address, country, minecraft_username
+                    FROM scans
+                    WHERE id = ?
+                ''', (scan_id,))
+                
+                row = cursor.fetchone()
+                if not row:
+                    return jsonify({'error': 'Escaneo no encontrado'}), 404
+                
+                scan = {
+                    'id': row[0],
+                    'token_id': row[1],
+                    'scan_token': row[2],
+                    'started_at': row[3],
+                    'completed_at': row[4],
+                    'status': row[5],
+                    'total_files_scanned': row[6],
+                    'issues_found': row[7],
+                    'scan_duration': row[8],
+                    'machine_id': row[9],
+                    'machine_name': row[10],
+                    'ip_address': row[11] if len(row) > 11 else None,
+                    'country': row[12] if len(row) > 12 else None,
+                    'minecraft_username': row[13] if len(row) > 13 else None
+                }
+                
+                # Obtener resultados
+                cursor.execute('''
+                    SELECT id, issue_type, issue_name, issue_path, issue_category,
+                           alert_level, confidence, detected_patterns, obfuscation_detected,
+                           file_hash, ai_analysis, ai_confidence
+                    FROM scan_results
+                    WHERE scan_id = ?
+                ''', (scan_id,))
+                
+                results = []
+                for r in cursor.fetchall():
+                    results.append({
+                        'id': r[0],
+                        'issue_type': r[1],
+                        'issue_name': r[2],
+                        'issue_path': r[3],
+                        'issue_category': r[4],
+                        'alert_level': r[5],
+                        'confidence': r[6],
+                        'detected_patterns': json.loads(r[7]) if r[7] else [],
+                        'obfuscation_detected': bool(r[8]),
+                        'file_hash': r[9],
+                        'ai_analysis': r[10],
+                        'ai_confidence': r[11]
+                    })
+                
+                scan['results'] = results
+                
+                # Guardar en caché
+                _stats_cache[cache_key] = scan
+                _stats_cache_time[cache_key] = time.time()
+                
+                return jsonify(scan), 200
+        except Exception as e:
+            print(f"⚠️ Error accediendo BD directamente en get_scan: {e}")
+            print("🔄 Intentando vía HTTP...")
+    
+    # Fallback: usar HTTP para obtener escaneo desde la API
     try:
-        # Acceso directo a BD (SIN HTTP - MUCHO MÁS RÁPIDO)
-        with get_api_db_cursor() as cursor:
-            cursor.execute('''
-                SELECT id, token_id, scan_token, started_at, completed_at, status,
-                       total_files_scanned, issues_found, scan_duration, machine_id, machine_name,
-                       ip_address, country, minecraft_username
-                FROM scans
-                WHERE id = ?
-            ''', (scan_id,))
-            
-            row = cursor.fetchone()
-            if not row:
-                return jsonify({'error': 'Escaneo no encontrado'}), 404
-            
-            scan = {
-                'id': row[0],
-                'token_id': row[1],
-                'scan_token': row[2],
-                'started_at': row[3],
-                'completed_at': row[4],
-                'status': row[5],
-                'total_files_scanned': row[6],
-                'issues_found': row[7],
-                'scan_duration': row[8],
-                'machine_id': row[9],
-                'machine_name': row[10],
-                'ip_address': row[11] if len(row) > 11 else None,
-                'country': row[12] if len(row) > 12 else None,
-                'minecraft_username': row[13] if len(row) > 13 else None
-            }
-            
-            # Obtener resultados
-            cursor.execute('''
-                SELECT id, issue_type, issue_name, issue_path, issue_category,
-                       alert_level, confidence, detected_patterns, obfuscation_detected,
-                       file_hash, ai_analysis, ai_confidence
-                FROM scan_results
-                WHERE scan_id = ?
-            ''', (scan_id,))
-            
-            results = []
-            for r in cursor.fetchall():
-                results.append({
-                    'id': r[0],
-                    'issue_type': r[1],
-                    'issue_name': r[2],
-                    'issue_path': r[3],
-                    'issue_category': r[4],
-                    'alert_level': r[5],
-                    'confidence': r[6],
-                    'detected_patterns': json.loads(r[7]) if r[7] else [],
-                    'obfuscation_detected': bool(r[8]),
-                    'file_hash': r[9],
-                    'ai_analysis': r[10],
-                    'ai_confidence': r[11]
-                })
-            
-            scan['results'] = results
-            
+        headers = {}
+        if API_KEY:
+            headers['X-API-Key'] = API_KEY
+        
+        response = requests.get(
+            get_api_url(f'/api/scans/{scan_id}'),
+            headers=headers,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            scan = response.json()
             # Guardar en caché
             _stats_cache[cache_key] = scan
             _stats_cache_time[cache_key] = time.time()
-            
             return jsonify(scan), 200
+        else:
+            return jsonify({'error': f'Error obteniendo escaneo: {response.text}'}), response.status_code
     except Exception as e:
         import traceback
-        print(f"Error en get_scan: {str(e)}")
+        print(f"❌ Error en get_scan (HTTP): {str(e)}")
         print(traceback.format_exc())
         return jsonify({'error': str(e)}), 500
 
