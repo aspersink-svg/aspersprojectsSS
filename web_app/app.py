@@ -1103,7 +1103,7 @@ def list_tokens():
                             'type': 'scan_token'  # Indicar que es un token de escaneo
                         })
                     
-                    return jsonify({'success': True, 'tokens': tokens})
+    return jsonify({'success': True, 'tokens': tokens})
             except Exception as e:
                 print(f"Error accediendo BD local, usando HTTP: {str(e)}")
                 # Continuar con HTTP si falla acceso local
@@ -1208,58 +1208,61 @@ def create_token():
         if use_http:
             api_url_full = get_api_url('/api/tokens')
             print(f"🌐 Creando token vía HTTP en: {api_url_full}")
-        
-        headers = {}
-        if API_KEY:
-            headers['X-API-Key'] = API_KEY
-            print(f"🔑 Enviando API Key: {API_KEY[:10]}...")
-        else:
-            print("⚠️ No hay API_KEY configurada, la API puede rechazar la petición")
-        
-        # Crear token a través de la API HTTP
-        try:
-            response = requests.post(
-                api_url_full,
-                json={
-                    'expires_days': expires_days,
-                    'max_uses': max_uses,
-                    'description': description,
-                    'created_by': created_by
-                },
-                headers=headers,
-                timeout=30  # Aumentado para Render
-            )
             
-            print(f"📡 Respuesta de API: Status {response.status_code}")
+            headers = {}
+            if API_KEY:
+                headers['X-API-Key'] = API_KEY
+                print(f"🔑 Enviando API Key: {API_KEY[:10]}...")
+            else:
+                print("⚠️ No hay API_KEY configurada, la API puede rechazar la petición")
             
-            if response.status_code == 201:
-                data = response.json()
-                print(f"✅ Token creado exitosamente: {data.get('token', '')[:20]}...")
-            return jsonify({
-                'success': True,
-                    'token': data.get('token'),
-                    'token_id': data.get('token_id'),
-                    'expires_at': data.get('expires_at'),
-                    'max_uses': max_uses,
-                    'description': description,
-                    'created_by': created_by,
-                    'type': 'scan_token'
-            }), 201
-        else:
-                error_text = response.text[:500] if response.text else 'Sin respuesta'
-                print(f"❌ Error de API: {response.status_code} - {error_text}")
-                try:
-                    error_data = response.json()
-                    error_msg = error_data.get('error', f'Error {response.status_code}')
-                except:
-                    error_msg = f'Error {response.status_code}: {error_text}'
-                return jsonify({'success': False, 'error': error_msg}), response.status_code
-        except requests.exceptions.Timeout:
-            print(f"⏱️ Timeout al crear token en {api_url_full}")
-            return jsonify({'success': False, 'error': 'Timeout al conectar con la API. La API puede estar inactiva.'}), 504
-        except requests.exceptions.ConnectionError as e:
-            print(f"🔌 Error de conexión: {str(e)}")
-            return jsonify({'success': False, 'error': f'No se pudo conectar con la API: {str(e)}'}), 503
+            # Crear token a través de la API HTTP
+            try:
+                response = requests.post(
+                    api_url_full,
+                    json={
+                        'expires_days': expires_days,
+                        'max_uses': max_uses,
+                        'description': description,
+                        'created_by': created_by
+                    },
+                    headers=headers,
+                    timeout=30  # Aumentado para Render
+                )
+                
+                print(f"📡 Respuesta de API: Status {response.status_code}")
+                
+                if response.status_code == 201:
+                    data = response.json()
+                    print(f"✅ Token creado exitosamente: {data.get('token', '')[:20]}...")
+                    return jsonify({
+                        'success': True,
+                        'token': data.get('token'),
+                        'token_id': data.get('token_id'),
+                        'expires_at': data.get('expires_at'),
+                        'max_uses': max_uses,
+                        'description': description,
+                        'created_by': created_by,
+                        'type': 'scan_token'
+                    }), 201
+                else:
+                    error_text = response.text[:500] if response.text else 'Sin respuesta'
+                    print(f"❌ Error de API: {response.status_code} - {error_text}")
+                    try:
+                        error_data = response.json()
+                        error_msg = error_data.get('error', f'Error {response.status_code}')
+                    except:
+                        error_msg = f'Error {response.status_code}: {error_text}'
+                    return jsonify({'success': False, 'error': error_msg}), response.status_code
+            except requests.exceptions.Timeout:
+                print(f"⏱️ Timeout al crear token en {api_url_full}")
+                return jsonify({'success': False, 'error': 'Timeout al conectar con la API. La API puede estar inactiva.'}), 504
+            except requests.exceptions.ConnectionError as e:
+                print(f"🔌 Error de conexión: {str(e)}")
+                return jsonify({'success': False, 'error': f'No se pudo conectar con la API: {str(e)}'}), 503
+            except Exception as http_error:
+                print(f"❌ Error inesperado en HTTP: {str(http_error)}")
+                return jsonify({'success': False, 'error': f'Error al crear token: {str(http_error)}'}), 500
         else:
             # Si no se usó HTTP y tampoco BD local, error
             return jsonify({'success': False, 'error': 'No se pudo crear token: BD no disponible y HTTP no configurado'}), 500
