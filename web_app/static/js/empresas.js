@@ -66,6 +66,67 @@ async function loadCompanyInfo() {
 }
 
 async function loadCompanyTokens() {
+    // Cargar tokens de ESCANEO de la empresa
+    try {
+        const scanTokensResponse = await fetch('/api/company/scan-tokens');
+        const scanTokensData = await scanTokensResponse.json();
+        
+        const scanTokensTbody = document.getElementById('company-scan-tokens-table-body');
+        if (scanTokensTbody) {
+            if (scanTokensData.success && scanTokensData.tokens && scanTokensData.tokens.length > 0) {
+                scanTokensTbody.innerHTML = scanTokensData.tokens.map(token => {
+                    const tokenStr = token.token || '';
+                    const usedCount = token.used_count || 0;
+                    const maxUses = token.max_uses || -1;
+                    const isUsed = maxUses > 0 && usedCount >= maxUses;
+                    const expiresAt = token.expires_at ? new Date(token.expires_at) : null;
+                    const isExpired = expiresAt && expiresAt < new Date();
+                    const isActive = token.is_active !== false && !isUsed && !isExpired;
+                    
+                    // Determinar estado y badge
+                    let statusText = 'Activo';
+                    let statusBadge = 'badge-success';
+                    if (isUsed) {
+                        statusText = 'Usado';
+                        statusBadge = 'badge-warning';
+                    } else if (isExpired) {
+                        statusText = 'Expirado';
+                        statusBadge = 'badge-danger';
+                    } else if (!isActive) {
+                        statusText = 'Inactivo';
+                        statusBadge = 'badge-secondary';
+                    }
+                    
+                    const createdDate = token.created_at ? new Date(token.created_at) : null;
+                    
+                    return `
+                        <tr>
+                            <td><code style="font-size: 11px;">${tokenStr.substring(0, 20)}...</code></td>
+                            <td>${usedCount}${maxUses > 0 ? ` / ${maxUses}` : ' / ∞'}</td>
+                            <td>${createdDate ? createdDate.toLocaleString('es-ES') : 'N/A'}</td>
+                            <td>${token.created_by || 'N/A'}</td>
+                            <td><span class="badge ${statusBadge}">${statusText}</span></td>
+                            <td>
+                                <button class="btn btn-sm btn-danger" onclick="deleteToken(${token.id})" title="Eliminar permanentemente este token">
+                                    🗑️ Eliminar
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            } else {
+                scanTokensTbody.innerHTML = '<tr><td colspan="6" class="loading-cell">No hay tokens de escaneo</td></tr>';
+            }
+        }
+    } catch (error) {
+        console.error('Error cargando tokens de escaneo de empresa:', error);
+        const scanTokensTbody = document.getElementById('company-scan-tokens-table-body');
+        if (scanTokensTbody) {
+            scanTokensTbody.innerHTML = '<tr><td colspan="6" class="loading-cell">Error al cargar tokens</td></tr>';
+        }
+    }
+    
+    // Cargar tokens de REGISTRO de la empresa
     try {
         const response = await fetch('/api/company/registration-tokens?include_used=false');
         const data = await response.json();
@@ -113,7 +174,7 @@ async function loadCompanyTokens() {
             tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">No hay tokens de registro</td></tr>';
         }
     } catch (error) {
-        console.error('Error cargando tokens de empresa:', error);
+        console.error('Error cargando tokens de registro de empresa:', error);
         const tbody = document.getElementById('company-tokens-table-body');
         if (tbody) {
             tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">Error al cargar tokens</td></tr>';

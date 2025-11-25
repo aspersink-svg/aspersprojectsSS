@@ -886,6 +886,88 @@ def api_get_company_info():
         return jsonify({'success': True, 'company': company})
     return jsonify({'success': False, 'error': 'Empresa no encontrada'}), 404
 
+@app.route('/api/company/scan-tokens', methods=['GET'])
+@company_user_required
+def api_list_company_scan_tokens():
+    """Lista tokens de ESCANEO de todos los usuarios de la empresa"""
+    user = get_user_by_id(session.get('user_id'))
+    if not user or not user.get('company_id'):
+        return jsonify({'success': False, 'error': 'Usuario no pertenece a una empresa'}), 403
+    
+    company_id = user['company_id']
+    
+    try:
+        # Obtener todos los usuarios de la empresa
+        company_users = list_users(company_id=company_id)
+        usernames = [u['username'] for u in company_users if u.get('username')]
+        
+        if not usernames:
+            return jsonify({'success': True, 'tokens': []})
+        
+        # Intentar acceso directo a BD si está disponible localmente
+        if API_DB_AVAILABLE_LOCALLY:
+            try:
+                with get_api_db_cursor() as cursor:
+                    # Crear placeholders para la consulta IN
+                    placeholders = ','.join(['?' for _ in usernames])
+                    cursor.execute(f'''
+                        SELECT id, token, created_at, expires_at, used_count, max_uses, 
+                               is_active, created_by, description
+                        FROM scan_tokens
+                        WHERE created_by IN ({placeholders})
+                        ORDER BY created_at DESC
+                        LIMIT 100
+                    ''', usernames)
+                    
+                    tokens = []
+                    for row in cursor.fetchall():
+                        tokens.append({
+                            'id': row[0],
+                            'token': row[1],
+                            'created_at': row[2],
+                            'expires_at': row[3],
+                            'used_count': row[4],
+                            'max_uses': row[5],
+                            'is_active': bool(row[6]),
+                            'created_by': row[7],
+                            'description': row[8],
+                            'type': 'scan_token'
+                        })
+                    
+                    return jsonify({'success': True, 'tokens': tokens})
+            except Exception as e:
+                print(f"Error accediendo BD local para tokens de empresa, usando HTTP: {str(e)}")
+        
+        # Si no está disponible localmente, usar HTTP
+        headers = {}
+        if API_KEY:
+            headers['X-API-Key'] = API_KEY
+        
+        try:
+            response = requests.get(
+                get_api_url('/api/tokens'),
+                headers=headers,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                all_tokens = data.get('tokens', [])
+                # Filtrar solo tokens de usuarios de la empresa
+                tokens = [t for t in all_tokens if t.get('created_by') in usernames]
+                return jsonify({'success': True, 'tokens': tokens})
+            else:
+                return jsonify({'success': True, 'tokens': []})
+        except Exception as e:
+            print(f"Error obteniendo tokens de empresa: {str(e)}")
+            return jsonify({'success': True, 'tokens': []})
+            
+    except Exception as e:
+        print(f"Error listando tokens de escaneo de empresa: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # ============================================================
 # API DE ADMINISTRACIÓN DE SUSCRIPCIONES (Página Secreta)
 # ============================================================
@@ -1289,7 +1371,9 @@ def create_token():
                         render_url = os.environ.get('RENDER_EXTERNAL_URL', '')
                         if render_url:
                             base_url = render_url.rstrip('/')
-                    download_link = f"{base_url}/d/{download_token}"
+                    # Incluir el token de escaneo como parámetro en la URL
+                    scan_token_param = token  # El token de escaneo que se acaba de crear
+                    download_link = f"{base_url}/d/{download_token}?token={scan_token_param}"
                     print(f"🔗 Enlace de descarga creado: {download_link}")
                 except Exception as e:
                     print(f"⚠️ Error creando enlace de descarga automático: {e}")
@@ -1371,7 +1455,12 @@ def create_token():
                             render_url = os.environ.get('RENDER_EXTERNAL_URL', '')
                             if render_url:
                                 base_url = render_url.rstrip('/')
-                        download_link = f"{base_url}/d/{download_token}"
+                        # Incluir el token de escaneo como parámetro en la URL
+                        scan_token_param = data.get('token')  # El token de escaneo que se acaba de crear
+                        if scan_token_param:
+                            download_link = f"{base_url}/d/{download_token}?token={scan_token_param}"
+                        else:
+                            download_link = f"{base_url}/d/{download_token}"
                         print(f"🔗 Enlace de descarga creado: {download_link}")
                     except Exception as e:
                         import traceback
@@ -2467,7 +2556,7 @@ def download_with_token(token):
     """Endpoint público para descargar usando token temporal (similar a Ocean)"""
     import os
     import sqlite3
-    from flask import send_file, jsonify
+    from flask import send_file, jsonify, request
     from datetime import datetime
     from auth import DATABASE
     
@@ -2489,6 +2578,9 @@ def download_with_token(token):
             return jsonify({'error': 'Enlace de descarga inválido o expirado'}), 404
         
         link_id, filename, expires_at, max_downloads, download_count, is_active = link
+        
+        # Obtener el token de escaneo del parámetro de la URL (si existe)
+        scan_token = request.args.get('token', None)
         
         # Asegurar que max_downloads sea un entero (puede venir como string desde SQLite)
         try:
@@ -2549,6 +2641,68 @@ def download_with_token(token):
                 break
         
         if file_path:
+            # Si hay un token de escaneo en la URL, crear un ZIP con el ejecutable y config.json
+            if scan_token and filename == 'MinecraftSSTool.exe':
+                try:
+                    import zipfile
+                    import tempfile
+                    import json as json_lib
+                    
+                    # Crear un archivo ZIP temporal
+                    temp_dir = tempfile.gettempdir()
+                    zip_path = os.path.join(temp_dir, f'MinecraftSSTool_with_token_{secrets.token_hex(8)}.zip')
+                    
+                    # Crear config.json con el token y todos los campos necesarios
+                    api_url = get_api_url('').rstrip('/api')
+                    web_url = request.host_url.rstrip('/') if not IS_RENDER else os.environ.get('RENDER_EXTERNAL_URL', request.host_url).rstrip('/')
+                    
+                    config_data = {
+                        "discord_webhook": "",
+                        "auth_token": "",
+                        "scan_timeout": 300,
+                        "scan_token": scan_token,
+                        "api_url": api_url,
+                        "web_url": web_url,
+                        "enable_db_integration": True,
+                        "enable_ai_analysis": True,
+                        "enable_discord_report": False,
+                        "enable_web_report": True
+                    }
+                    
+                    # Crear el ZIP con el ejecutable y el config.json
+                    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                        # Agregar el ejecutable
+                        zipf.write(file_path, filename)
+                        # Agregar el config.json
+                        zipf.writestr('config.json', json_lib.dumps(config_data, indent=2))
+                    
+                    print(f"✅ ZIP creado con ejecutable y config.json: {zip_path}")
+                    print(f"🔑 Token incluido en config: {scan_token[:20]}...")
+                    
+                    # Enviar el ZIP
+                    response = send_file(zip_path, as_attachment=True, download_name='MinecraftSSTool.zip', mimetype='application/zip')
+                    
+                    # Limpiar el archivo temporal después de enviarlo (en un thread separado)
+                    def cleanup_temp_file():
+                        import time
+                        time.sleep(5)  # Esperar 5 segundos antes de eliminar
+                        try:
+                            if os.path.exists(zip_path):
+                                os.remove(zip_path)
+                                print(f"🗑️ Archivo temporal eliminado: {zip_path}")
+                        except Exception as e:
+                            print(f"⚠️ Error eliminando archivo temporal: {e}")
+                    
+                    import threading
+                    threading.Thread(target=cleanup_temp_file, daemon=True).start()
+                    
+                    return response
+                except Exception as e:
+                    print(f"⚠️ Error creando ZIP con token: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # Continuar con la descarga normal si falla la creación del ZIP
+            
             return send_file(file_path, as_attachment=True, download_name=filename)
         else:
             return jsonify({'error': f'Archivo no encontrado: {filename}'}), 404

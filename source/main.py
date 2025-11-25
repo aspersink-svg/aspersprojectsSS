@@ -2235,6 +2235,25 @@ class MinecraftSSApp:
                         with open(config_path, 'r', encoding='utf-8') as f:
                             config = json.load(f)
                             print(f"✅ Config cargado desde: {config_path}")
+                            
+                            # Si hay un scan_token en el config, guardarlo automáticamente en ubicación persistente
+                            if config.get('scan_token'):
+                                print(f"🔑 Token encontrado en config: {config.get('scan_token')[:20]}...")
+                                # Guardar el config con el token en la ubicación persistente (AppData)
+                                try:
+                                    if getattr(sys, 'frozen', False):
+                                        appdata_dir = os.path.join(os.environ.get('APPDATA', ''), 'ASPERSProjectsSS')
+                                        os.makedirs(appdata_dir, exist_ok=True)
+                                        persistent_config_path = os.path.join(appdata_dir, 'config.json')
+                                        
+                                        # Guardar config con el token
+                                        with open(persistent_config_path, 'w', encoding='utf-8') as f:
+                                            json.dump(config, f, indent=2)
+                                        print(f"✅ Token guardado en config persistente: {persistent_config_path}")
+                                        self.config_path = persistent_config_path
+                                except Exception as e:
+                                    print(f"⚠️ Error guardando token en config persistente: {e}")
+                            
                             # Guardar la ruta para futuras escrituras
                             self.config_path = config_path
                             return config
