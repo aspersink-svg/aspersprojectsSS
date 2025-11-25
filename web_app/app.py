@@ -76,7 +76,7 @@ def get_api_url(endpoint):
         return f"{api_url_env.rstrip('/')}/{endpoint}"
     
     # Usar API_BASE_URL (que ya tiene el valor correcto según el entorno)
-    return f"{API_BASE_URL}/{endpoint}"
+        return f"{API_BASE_URL}/{endpoint}"
 
 def require_api_key(f):
     """Decorador para requerir API key"""
@@ -1103,7 +1103,7 @@ def list_tokens():
                             'type': 'scan_token'  # Indicar que es un token de escaneo
                         })
                 
-                return jsonify({'success': True, 'tokens': tokens})
+    return jsonify({'success': True, 'tokens': tokens})
             except Exception as e:
                 print(f"Error accediendo BD local, usando HTTP: {str(e)}")
                 # Continuar con HTTP si falla acceso local
@@ -1235,8 +1235,8 @@ def create_token():
             if response.status_code == 201:
                 data = response.json()
                 print(f"✅ Token creado exitosamente: {data.get('token', '')[:20]}...")
-                return jsonify({
-                    'success': True,
+            return jsonify({
+                'success': True,
                     'token': data.get('token'),
                     'token_id': data.get('token_id'),
                     'expires_at': data.get('expires_at'),
@@ -1244,8 +1244,8 @@ def create_token():
                     'description': description,
                     'created_by': created_by,
                     'type': 'scan_token'
-                }), 201
-            else:
+            }), 201
+        else:
                 error_text = response.text[:500] if response.text else 'Sin respuesta'
                 print(f"❌ Error de API: {response.status_code} - {error_text}")
                 try:
@@ -1289,8 +1289,8 @@ def delete_token(token_id):
             cursor.execute('SELECT id, created_by FROM scan_tokens WHERE id = ?', (token_id,))
             token_row = cursor.fetchone()
             if not token_row:
-                return jsonify({'success': False, 'error': 'Token no encontrado'}), 404
-            
+            return jsonify({'success': False, 'error': 'Token no encontrado'}), 404
+        
             token_creator = token_row[1]
             
             # Verificar permisos: solo el creador o un admin puede eliminar
@@ -1312,8 +1312,8 @@ def list_scans():
     """Lista escaneos - Usa BD directa si está disponible, sino HTTP"""
     import time
     
-    limit = request.args.get('limit', 50, type=int)
-    offset = request.args.get('offset', 0, type=int)
+        limit = request.args.get('limit', 50, type=int)
+        offset = request.args.get('offset', 0, type=int)
     
     # Caché por limit/offset (10 segundos TTL)
     cache_key = f'scans_list_{limit}_{offset}'
@@ -1445,7 +1445,7 @@ def list_scans():
                 print(f"📋 Primeros escaneos recibidos:")
                 for i, scan in enumerate(result.get('scans', [])[:3]):
                     print(f"   [{i+1}] Scan ID: {scan.get('id')}, Machine: {scan.get('machine_name')}, Issues: {scan.get('issues_found')}, Status: {scan.get('status')}")
-            else:
+        else:
                 print(f"⚠️ La API devolvió 200 pero sin escaneos en la respuesta")
                 print(f"📋 Respuesta completa: {result}")
             
@@ -2274,9 +2274,24 @@ def generate_app():
 
 @app.route('/download/<filename>')
 def download_file(filename):
-    """Endpoint para descargar el ejecutable generado - OPTIMIZADO"""
+    """Endpoint para descargar el ejecutable generado - Requiere autenticación o token"""
     import os
-    from flask import send_file
+    from flask import send_file, request
+    
+    # Verificar si hay un token en la query string
+    token = request.args.get('token')
+    if token:
+        # Usar el endpoint con token
+        return download_with_token(token)
+    
+    # Si no hay token, requerir autenticación (comportamiento anterior)
+    from web_app.auth import login_required
+    return login_required(lambda: _send_file_download(filename))()
+
+def _send_file_download(filename):
+    """Función auxiliar para enviar el archivo"""
+    import os
+    from flask import send_file, jsonify
     
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
@@ -2298,6 +2313,88 @@ def download_file(filename):
         return send_file(file_path, as_attachment=True, download_name=filename)
     else:
         return jsonify({'error': f'Archivo no encontrado: {filename}'}), 404
+
+@app.route('/d/<token>')
+def download_with_token(token):
+    """Endpoint público para descargar usando token temporal (similar a Ocean)"""
+    import os
+    import sqlite3
+    from flask import send_file, jsonify
+    from datetime import datetime
+    
+    try:
+        # Buscar el enlace en la BD
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, filename, expires_at, max_downloads, download_count, is_active
+            FROM download_links
+            WHERE token = ? AND is_active = 1
+        ''', (token,))
+        
+        link = cursor.fetchone()
+        
+        if not link:
+            conn.close()
+            return jsonify({'error': 'Enlace de descarga inválido o expirado'}), 404
+        
+        link_id, filename, expires_at, max_downloads, download_count, is_active = link
+        
+        # Verificar expiración
+        if expires_at:
+            expires_dt = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+            if datetime.now() > expires_dt:
+                conn.close()
+                return jsonify({'error': 'Este enlace de descarga ha expirado'}), 410
+        
+        # Verificar límite de descargas
+        if download_count >= max_downloads:
+            conn.close()
+            return jsonify({'error': 'Este enlace ha alcanzado el límite de descargas'}), 403
+        
+        # Incrementar contador de descargas
+        cursor.execute('''
+            UPDATE download_links
+            SET download_count = download_count + 1
+            WHERE id = ?
+        ''', (link_id,))
+        
+        # Si alcanzó el límite, desactivar el enlace
+        if download_count + 1 >= max_downloads:
+            cursor.execute('''
+                UPDATE download_links
+                SET is_active = 0
+                WHERE id = ?
+            ''', (link_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        # Buscar y enviar el archivo
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        possible_paths = [
+            os.path.join(project_root, 'downloads', filename),
+            os.path.join(project_root, 'source', 'dist', filename) if filename == 'MinecraftSSTool.exe' else None,
+            os.path.join(project_root, filename)
+        ]
+        
+        file_path = None
+        for path in possible_paths:
+            if path and os.path.exists(path) and os.path.isfile(path):
+                file_path = path
+                break
+        
+        if file_path:
+        return send_file(file_path, as_attachment=True, download_name=filename)
+    else:
+        return jsonify({'error': f'Archivo no encontrado: {filename}'}), 404
+            
+    except Exception as e:
+        import traceback
+        print(f"❌ Error en download_with_token: {e}")
+        print(traceback.format_exc())
+        return jsonify({'error': f'Error al procesar descarga: {str(e)}'}), 500
 
 @app.route('/api/scans/<int:scan_id>/report-html', methods=['GET'])
 @login_required
@@ -2705,6 +2802,157 @@ def get_latest_exe():
             'error': error_msg,
             'is_render': IS_RENDER
         }), 404
+
+@app.route('/api/download-links', methods=['POST'])
+@login_required
+def create_download_link():
+    """Crea un nuevo enlace de descarga temporal (solo para staff/admin)"""
+    import secrets
+    import sqlite3
+    from datetime import datetime, timedelta
+    from web_app.auth import is_admin, get_user_id
+    
+    # Verificar permisos (solo staff/admin)
+    if not is_admin(session.get('user_id')):
+        return jsonify({'error': 'No tienes permisos para crear enlaces de descarga'}), 403
+    
+    data = request.json
+    filename = data.get('filename', 'MinecraftSSTool.exe')
+    expires_hours = data.get('expires_hours', 24)  # Por defecto 24 horas
+    max_downloads = data.get('max_downloads', 1)  # Por defecto 1 descarga
+    description = data.get('description', '')
+    
+    # Generar token único
+    token = secrets.token_urlsafe(32)
+    
+    # Calcular fecha de expiración
+    expires_at = datetime.now() + timedelta(hours=expires_hours)
+    
+    try:
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO download_links (token, filename, created_by, expires_at, max_downloads, description)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (token, filename, get_user_id(), expires_at.isoformat(), max_downloads, description))
+        
+        link_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        
+        # Generar URL completa
+        base_url = request.host_url.rstrip('/')
+        if IS_RENDER:
+            render_url = os.environ.get('RENDER_EXTERNAL_URL', '')
+            if render_url:
+                base_url = render_url.rstrip('/')
+        download_url = f"{base_url}/d/{token}"
+        
+        return jsonify({
+            'success': True,
+            'link_id': link_id,
+            'token': token,
+            'download_url': download_url,
+            'expires_at': expires_at.isoformat(),
+            'max_downloads': max_downloads,
+            'filename': filename
+        }), 201
+        
+    except Exception as e:
+        import traceback
+        print(f"❌ Error creando enlace de descarga: {e}")
+        print(traceback.format_exc())
+        return jsonify({'error': f'Error al crear enlace: {str(e)}'}), 500
+
+@app.route('/api/download-links', methods=['GET'])
+@login_required
+def list_download_links():
+    """Lista todos los enlaces de descarga (solo para staff/admin)"""
+    import sqlite3
+    from web_app.auth import is_admin
+    
+    # Verificar permisos
+    if not is_admin(session.get('user_id')):
+        return jsonify({'error': 'No tienes permisos para ver enlaces de descarga'}), 403
+    
+    try:
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT dl.id, dl.token, dl.filename, dl.created_at, dl.expires_at,
+                   dl.max_downloads, dl.download_count, dl.is_active, dl.description,
+                   u.username as created_by_username
+            FROM download_links dl
+            LEFT JOIN users u ON dl.created_by = u.id
+            ORDER BY dl.created_at DESC
+            LIMIT 50
+        ''')
+        
+        links = []
+        for row in cursor.fetchall():
+            links.append({
+                'id': row[0],
+                'token': row[1],
+                'filename': row[2],
+                'created_at': row[3],
+                'expires_at': row[4],
+                'max_downloads': row[5],
+                'download_count': row[6],
+                'is_active': bool(row[7]),
+                'description': row[8],
+                'created_by': row[9]
+            })
+        
+        conn.close()
+        
+        # Generar URLs completas
+        base_url = request.host_url.rstrip('/')
+        if IS_RENDER:
+            render_url = os.environ.get('RENDER_EXTERNAL_URL', '')
+            if render_url:
+                base_url = render_url.rstrip('/')
+        
+        for link in links:
+            link['download_url'] = f"{base_url}/d/{link['token']}"
+        
+        return jsonify({'success': True, 'links': links}), 200
+        
+    except Exception as e:
+        import traceback
+        print(f"❌ Error listando enlaces: {e}")
+        print(traceback.format_exc())
+        return jsonify({'error': f'Error al listar enlaces: {str(e)}'}), 500
+
+@app.route('/api/download-links/<int:link_id>', methods=['DELETE'])
+@login_required
+def delete_download_link(link_id):
+    """Desactiva un enlace de descarga (solo para staff/admin)"""
+    import sqlite3
+    from web_app.auth import is_admin
+    
+    # Verificar permisos
+    if not is_admin(session.get('user_id')):
+        return jsonify({'error': 'No tienes permisos para eliminar enlaces'}), 403
+    
+    try:
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE download_links
+            SET is_active = 0
+            WHERE id = ?
+        ''', (link_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True, 'message': 'Enlace desactivado'}), 200
+        
+    except Exception as e:
+        return jsonify({'error': f'Error al desactivar enlace: {str(e)}'}), 500
 
 @app.route('/api/import/echo', methods=['POST'])
 @login_required

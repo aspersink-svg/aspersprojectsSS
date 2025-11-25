@@ -95,6 +95,27 @@ def init_auth_db():
     except sqlite3.OperationalError:
         pass  # La columna 'role' no existe, todo bien
     
+    # Tabla de enlaces de descarga temporales (similar a Ocean)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS download_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT UNIQUE NOT NULL,
+            filename TEXT NOT NULL,
+            created_by INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP,
+            max_downloads INTEGER DEFAULT 1,
+            download_count INTEGER DEFAULT 0,
+            is_active BOOLEAN DEFAULT 1,
+            description TEXT,
+            FOREIGN KEY (created_by) REFERENCES users(id)
+        )
+    ''')
+    
+    # Índice para búsquedas rápidas por token
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_download_links_token ON download_links(token)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_download_links_active ON download_links(is_active, expires_at)')
+    
     # Índices para mejor rendimiento (solo después de asegurar que las columnas existen)
     try:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_company ON users(company_id)')

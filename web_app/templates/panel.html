@@ -685,6 +685,50 @@
                     </div>
                 </div>
 
+                <!-- Generar Enlace de Descarga Temporal -->
+                <div class="card" style="margin-top: 24px;">
+                    <h3 class="card-title">🔗 Generar Enlace de Descarga Temporal</h3>
+                    <p class="card-description">Crea enlaces temporales para compartir el ejecutable sin necesidad de iniciar sesión (similar a Ocean)</p>
+                    <form id="download-link-form">
+                        <div class="form-group">
+                            <label>Archivo</label>
+                            <select id="download-link-filename" required>
+                                <option value="MinecraftSSTool.exe">MinecraftSSTool.exe</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Horas de validez (default: 24 horas)</label>
+                            <input type="number" id="download-link-expires" value="24" min="1" max="168" required>
+                            <small>Máximo 7 días (168 horas)</small>
+                        </div>
+                        <div class="form-group">
+                            <label>Máximo de descargas (default: 1)</label>
+                            <input type="number" id="download-link-max" value="1" min="1" max="100" required>
+                            <small>El enlace se desactivará después de alcanzar este límite</small>
+                        </div>
+                        <div class="form-group">
+                            <label>Descripción (opcional)</label>
+                            <input type="text" id="download-link-description" placeholder="Ej: Enlace para usuario X">
+                        </div>
+                        <button type="submit" class="btn btn-primary">Generar Enlace</button>
+                    </form>
+                    <div id="download-link-result" style="margin-top: 20px; display: none;">
+                        <div class="token-display">
+                            <input type="text" id="generated-download-link" readonly style="width: 100%; padding: 8px; font-family: monospace; border: 1px solid #30363d; background: #0d1117; color: #c9d1d9; border-radius: 4px;">
+                            <button class="btn btn-secondary" id="copy-download-link-btn" style="margin-top: 10px;">📋 Copiar Enlace</button>
+                        </div>
+                        <p class="warning-text" style="margin-top: 10px;">✅ Este enlace permite descargar el ejecutable sin iniciar sesión. Compártelo de forma segura.</p>
+                    </div>
+                </div>
+
+                <!-- Lista de Enlaces de Descarga -->
+                <div class="card" style="margin-top: 24px;">
+                    <h3 class="card-title">📋 Enlaces de Descarga Activos</h3>
+                    <div id="download-links-list">
+                        <p class="loading-text">Cargando enlaces...</p>
+                    </div>
+                </div>
+
                 <!-- Lista de Tokens de Registro -->
                 <div class="card" style="margin-top: 24px;">
                     <h3 class="card-title">Tokens de Registro Activos</h3>
