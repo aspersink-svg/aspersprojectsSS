@@ -10,9 +10,17 @@ import time
 from contextlib import contextmanager
 from functools import wraps
 
-# Detectar qué tipo de BD usar
+# Detectar qué tipo de BD usar (PostgreSQL tiene prioridad)
 USE_POSTGRESQL = bool(os.environ.get('DATABASE_URL') or os.environ.get('POSTGRES_HOST'))
 USE_MYSQL = bool(os.environ.get('MYSQL_HOST') and not USE_POSTGRESQL)
+
+# Debug: mostrar qué BD se detectó
+if USE_POSTGRESQL:
+    print(f"🔍 Detectado PostgreSQL: DATABASE_URL={'Sí' if os.environ.get('DATABASE_URL') else 'No'}, POSTGRES_HOST={'Sí' if os.environ.get('POSTGRES_HOST') else 'No'}")
+elif USE_MYSQL:
+    print(f"🔍 Detectado MySQL: MYSQL_HOST={os.environ.get('MYSQL_HOST')}")
+else:
+    print("🔍 No se detectó ninguna BD configurada")
 
 if USE_POSTGRESQL:
     # Usar PostgreSQL
@@ -35,8 +43,8 @@ if USE_MYSQL and not USE_POSTGRESQL:
         print("⚠️ pymysql no instalado")
         USE_MYSQL = False
 
-# Configuración desde variables de entorno
-MYSQL_HOST = os.environ.get('MYSQL_HOST', 'localhost')
+# Configuración desde variables de entorno (solo si no es PostgreSQL)
+MYSQL_HOST = os.environ.get('MYSQL_HOST')  # No usar 'localhost' por defecto
 MYSQL_PORT = int(os.environ.get('MYSQL_PORT', 3306))
 MYSQL_USER = os.environ.get('MYSQL_USER', 'root')
 MYSQL_PASSWORD = os.environ.get('MYSQL_PASSWORD', '')
@@ -48,10 +56,14 @@ _local = threading.local()
 
 def get_db_connection():
     """Obtiene una conexión MySQL/PostgreSQL thread-local (reutilizable)"""
-    if USE_POSTGRESQL:
+    # Verificar nuevamente las variables de entorno (por si cambiaron)
+    current_use_postgresql = bool(os.environ.get('DATABASE_URL') or os.environ.get('POSTGRES_HOST'))
+    current_use_mysql = bool(os.environ.get('MYSQL_HOST') and not current_use_postgresql)
+    
+    if current_use_postgresql:
         # Usar PostgreSQL
         return _get_postgresql_connection()
-    elif USE_MYSQL:
+    elif current_use_mysql:
         # Usar MySQL
         return _get_mysql_connection()
     else:
@@ -93,6 +105,10 @@ def _get_postgresql_connection():
 
 def _get_mysql_connection():
     """Obtiene conexión MySQL"""
+    # Verificar que MYSQL_HOST esté configurado
+    if not MYSQL_HOST:
+        raise Exception("MYSQL_HOST no está configurado. Configura MYSQL_HOST o usa PostgreSQL con DATABASE_URL")
+    
     if not hasattr(_local, 'connection') or not _local.connection.open:
         # Configurar SSL si es necesario (para PlanetScale, Railway, etc.)
         ssl_config = None
