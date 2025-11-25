@@ -2822,13 +2822,14 @@ def create_download_link():
     import secrets
     import sqlite3
     from datetime import datetime, timedelta
-    from auth import is_admin, get_user_id
+    from auth import is_admin, DATABASE
     
     # Verificar permisos (solo staff/admin)
-    if not is_admin(session.get('user_id')):
+    user_id = session.get('user_id')
+    if not is_admin(user_id):
         return jsonify({'error': 'No tienes permisos para crear enlaces de descarga'}), 403
     
-    data = request.json
+    data = request.json or {}
     filename = data.get('filename', 'MinecraftSSTool.exe')
     expires_hours = data.get('expires_hours', 24)  # Por defecto 24 horas
     max_downloads = data.get('max_downloads', 1)  # Por defecto 1 descarga
@@ -2847,7 +2848,7 @@ def create_download_link():
         cursor.execute('''
             INSERT INTO download_links (token, filename, created_by, expires_at, max_downloads, description)
             VALUES (?, ?, ?, ?, ?, ?)
-        ''', (token, filename, get_user_id(), expires_at.isoformat(), max_downloads, description))
+        ''', (token, filename, user_id, expires_at.isoformat(), max_downloads, description))
         
         link_id = cursor.lastrowid
         conn.commit()
