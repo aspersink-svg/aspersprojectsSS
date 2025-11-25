@@ -2407,6 +2407,7 @@ def download_with_token(token):
     import sqlite3
     from flask import send_file, jsonify
     from datetime import datetime
+    from auth import DATABASE
     
     try:
         # Buscar el enlace en la BD
