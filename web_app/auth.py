@@ -241,28 +241,52 @@ def init_auth_db():
     # Crear usuario administrador por defecto si no existe
     try:
         # Verificar si existe algún admin (compatibilidad con esquema antiguo y nuevo)
-        cursor.execute('SELECT COUNT(*) FROM users WHERE roles LIKE "%admin%" OR role = "admin"')
+        # Primero verificar qué columnas existen
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [col[1] for col in cursor.fetchall()]
+        has_role_column = 'role' in columns
+        has_roles_column = 'roles' in columns
+        
+        if has_roles_column:
+            # Usar esquema nuevo con roles
+            cursor.execute('SELECT COUNT(*) FROM users WHERE roles LIKE "%admin%"')
+        elif has_role_column:
+            # Usar esquema antiguo con role
+            cursor.execute('SELECT COUNT(*) FROM users WHERE role = "admin"')
+        else:
+            # No hay ninguna columna, crear admin con roles
+            cursor.execute('SELECT COUNT(*) FROM users')
+        
         admin_count = cursor.fetchone()[0]
         
         if admin_count == 0:
             # Crear admin por defecto: admin / admin123 (cambiar en producción!)
             default_password_hash = hash_password('admin123')
-            # Intentar con el esquema nuevo primero
-            try:
-                cursor.execute('''
-                    INSERT INTO users (username, password_hash, roles, created_by)
-                    VALUES (?, ?, ?, ?)
-                ''', ('admin', default_password_hash, '["admin"]', 'system'))
-            except sqlite3.OperationalError:
-                # Si falla, intentar con esquema antiguo
-                cursor.execute('''
-                    INSERT INTO users (username, password_hash, role, created_by)
-                    VALUES (?, ?, ?, ?)
-                ''', ('admin', default_password_hash, 'admin', 'system'))
-            print("✅ Usuario administrador creado: admin / admin123")
+            # Intentar con el esquema nuevo primero (roles)
+            if has_roles_column:
+                try:
+                    cursor.execute('''
+                        INSERT INTO users (username, password_hash, roles, created_by)
+                        VALUES (?, ?, ?, ?)
+                    ''', ('admin', default_password_hash, '["admin"]', 'system'))
+                    print("✅ Usuario administrador creado: admin / admin123")
+                except sqlite3.OperationalError as e:
+                    print(f"⚠️ Error creando admin con roles: {e}")
+            elif has_role_column:
+                # Intentar con esquema antiguo (role)
+                try:
+                    cursor.execute('''
+                        INSERT INTO users (username, password_hash, role, created_by)
+                        VALUES (?, ?, ?, ?)
+                    ''', ('admin', default_password_hash, 'admin', 'system'))
+                    print("✅ Usuario administrador creado: admin / admin123")
+                except sqlite3.OperationalError as e:
+                    print(f"⚠️ Error creando admin con role: {e}")
             print("⚠️ IMPORTANTE: Cambia la contraseña del admin en producción!")
     except Exception as e:
         print(f"⚠️ Error verificando/creando admin: {e}")
+        import traceback
+        traceback.print_exc()
     
     conn.commit()
     conn.close()

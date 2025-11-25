@@ -22,16 +22,25 @@ elif USE_MYSQL:
 else:
     print("🔍 No se detectó ninguna BD configurada")
 
+# Variables globales para los módulos
+psycopg2 = None
+RealDictCursor = None
+pymysql = None
+DictCursor = None
+
 if USE_POSTGRESQL:
     # Usar PostgreSQL
     try:
         import psycopg2
         from psycopg2.extras import RealDictCursor
         print("✅ Usando PostgreSQL")
-    except ImportError:
-        print("⚠️ psycopg2 no instalado, intentando MySQL...")
+    except ImportError as e:
+        print(f"⚠️ psycopg2 no instalado: {e}")
+        print("⚠️ Instala psycopg2-binary: pip install psycopg2-binary")
+        print("⚠️ Deshabilitando PostgreSQL, intentando MySQL...")
         USE_POSTGRESQL = False
-        USE_MYSQL = True
+        psycopg2 = None
+        RealDictCursor = None
 
 if USE_MYSQL and not USE_POSTGRESQL:
     # Usar MySQL
@@ -39,9 +48,11 @@ if USE_MYSQL and not USE_POSTGRESQL:
         import pymysql
         from pymysql.cursors import DictCursor
         print("✅ Usando MySQL")
-    except ImportError:
-        print("⚠️ pymysql no instalado")
+    except ImportError as e:
+        print(f"⚠️ pymysql no instalado: {e}")
         USE_MYSQL = False
+        pymysql = None
+        DictCursor = None
 
 # Configuración desde variables de entorno (solo si no es PostgreSQL)
 MYSQL_HOST = os.environ.get('MYSQL_HOST')  # No usar 'localhost' por defecto
@@ -71,6 +82,9 @@ def get_db_connection():
 
 def _get_postgresql_connection():
     """Obtiene conexión PostgreSQL"""
+    if psycopg2 is None:
+        raise ImportError("psycopg2 no está instalado. Instala con: pip install psycopg2-binary")
+    
     if not hasattr(_local, 'connection') or _local.connection.closed:
         try:
             if os.environ.get('DATABASE_URL'):
@@ -105,6 +119,9 @@ def _get_postgresql_connection():
 
 def _get_mysql_connection():
     """Obtiene conexión MySQL"""
+    if pymysql is None:
+        raise ImportError("pymysql no está instalado. Instala con: pip install pymysql")
+    
     # Verificar que MYSQL_HOST esté configurado
     if not MYSQL_HOST:
         raise Exception("MYSQL_HOST no está configurado. Configura MYSQL_HOST o usa PostgreSQL con DATABASE_URL")
