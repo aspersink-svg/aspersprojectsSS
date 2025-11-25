@@ -87,13 +87,46 @@ def _get_postgresql_connection():
     
     if not hasattr(_local, 'connection') or _local.connection.closed:
         try:
-            if os.environ.get('DATABASE_URL'):
-                # Usar connection string de Render
-                _local.connection = psycopg2.connect(
-                    os.environ.get('DATABASE_URL'),
-                    cursor_factory=RealDictCursor,
-                    connect_timeout=10
-                )
+            database_url = os.environ.get('DATABASE_URL')
+            
+            if database_url:
+                # Verificar y corregir el formato de DATABASE_URL si es necesario
+                # Render puede dar URLs sin el dominio completo
+                if database_url.startswith('postgresql://') and '@' in database_url:
+                    # Parsear la URL
+                    try:
+                        from urllib.parse import urlparse
+                        parsed = urlparse(database_url)
+                        host = parsed.hostname
+                        
+                        # Si el hostname no tiene dominio, puede ser un problema
+                        # En Render, el Internal Database URL debería tener el dominio completo
+                        if host and '.' not in host and host != 'localhost':
+                            print(f"⚠️ Hostname sin dominio detectado: {host}")
+                            print(f"⚠️ Asegúrate de usar el 'Internal Database URL' completo de Render")
+                            print(f"⚠️ Debe incluir el dominio completo, ej: dpg-xxxxx-a.oregon-postgres.render.com")
+                        
+                        # Intentar conectar
+                        _local.connection = psycopg2.connect(
+                            database_url,
+                            cursor_factory=RealDictCursor,
+                            connect_timeout=10
+                        )
+                    except Exception as parse_error:
+                        print(f"⚠️ Error parseando DATABASE_URL: {parse_error}")
+                        # Intentar conectar directamente de todas formas
+                        _local.connection = psycopg2.connect(
+                            database_url,
+                            cursor_factory=RealDictCursor,
+                            connect_timeout=10
+                        )
+                else:
+                    # URL mal formada, intentar de todas formas
+                    _local.connection = psycopg2.connect(
+                        database_url,
+                        cursor_factory=RealDictCursor,
+                        connect_timeout=10
+                    )
             else:
                 # Usar variables individuales
                 POSTGRES_HOST = os.environ.get('POSTGRES_HOST')
@@ -101,6 +134,9 @@ def _get_postgresql_connection():
                 POSTGRES_USER = os.environ.get('POSTGRES_USER')
                 POSTGRES_PASSWORD = os.environ.get('POSTGRES_PASSWORD')
                 POSTGRES_DATABASE = os.environ.get('POSTGRES_DATABASE')
+                
+                if not POSTGRES_HOST:
+                    raise Exception("POSTGRES_HOST o DATABASE_URL debe estar configurado")
                 
                 _local.connection = psycopg2.connect(
                     host=POSTGRES_HOST,
@@ -114,6 +150,9 @@ def _get_postgresql_connection():
             print(f"✅ Conexión PostgreSQL establecida")
         except Exception as e:
             print(f"❌ Error conectando a PostgreSQL: {e}")
+            print(f"💡 Verifica que DATABASE_URL tenga el formato correcto:")
+            print(f"   postgresql://usuario:password@host-completo:5432/database")
+            print(f"   El host debe incluir el dominio completo (ej: dpg-xxxxx-a.oregon-postgres.render.com)")
             raise
     return _local.connection
 
