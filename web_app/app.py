@@ -1292,8 +1292,8 @@ def delete_token(token_id):
             cursor.execute('SELECT id, created_by FROM scan_tokens WHERE id = ?', (token_id,))
             token_row = cursor.fetchone()
             if not token_row:
-            return jsonify({'success': False, 'error': 'Token no encontrado'}), 404
-        
+                return jsonify({'success': False, 'error': 'Token no encontrado'}), 404
+            
             token_creator = token_row[1]
             
             # Verificar permisos: solo el creador o un admin puede eliminar
