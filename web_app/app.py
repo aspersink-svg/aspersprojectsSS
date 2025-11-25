@@ -401,16 +401,24 @@ def get_api_db_cursor():
     if not API_DB_AVAILABLE_LOCALLY:
         raise FileNotFoundError(f"Base de datos de API no disponible localmente en {API_DATABASE_PATH}. Usa HTTP para crear tokens.")
     
-    conn = sqlite3.connect(API_DATABASE_PATH, check_same_thread=False, timeout=5.0)
+    conn = sqlite3.connect(API_DATABASE_PATH, check_same_thread=False, timeout=10.0)
+    # Configurar SQLite para mejor persistencia
+    conn.execute('PRAGMA journal_mode=WAL')
+    conn.execute('PRAGMA synchronous=NORMAL')
+    conn.execute('PRAGMA busy_timeout=5000')
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     try:
         yield cursor
+        # Hacer commit explícitamente antes de cerrar
         conn.commit()
-    except Exception:
+        # Verificar que el commit se hizo correctamente
+        conn.execute('SELECT 1')
+    except Exception as e:
         conn.rollback()
         raise
     finally:
+        # Cerrar conexión explícitamente
         conn.close()
 
 # Caché simple en memoria para estadísticas

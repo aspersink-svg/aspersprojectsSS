@@ -509,22 +509,35 @@ class MinecraftSSApp:
             self.db_integration = DatabaseIntegration(api_url=api_url, scan_token=scan_token)
             self.db_integration.app = self  # Pasar referencia de la app para acceso a username detectado
             print("✅ Integración con BD inicializada")
-        except ImportError:
-            print("⚠️ Módulo db_integration no disponible - continuando sin integración BD")
+        except ImportError as e:
+            print(f"⚠️ Módulo db_integration no disponible - continuando sin integración BD: {e}")
+            self.db_integration = None
         except Exception as e:
+            import traceback
             print(f"⚠️ Error al inicializar integración BD: {e}")
+            print(f"   Traceback: {traceback.format_exc()}")
+            self.db_integration = None
         
         # Sistema de patrones legítimos (aprende de feedback)
         self.legitimate_patterns = None
         try:
             from legitimate_patterns import LegitimatePatterns
+            # Usar ruta por defecto para la base de datos
+            # La BD se busca en el mismo directorio que el ejecutable o script
             db_path = 'scanner_db.sqlite'
-            if self.db_integration and hasattr(self.db_integration, 'database_path'):
-                db_path = self.db_integration.database_path
+            
+            # Verificar que db_integration existe antes de usarlo
+            # DatabaseIntegration no tiene database_path, así que siempre usamos la ruta por defecto
+            if self.db_integration is None:
+                print("⚠️ db_integration no está disponible, usando configuración por defecto para patrones legítimos")
+            
             self.legitimate_patterns = LegitimatePatterns(database_path=db_path)
             print("✅ Sistema de patrones legítimos inicializado")
         except Exception as e:
+            import traceback
             print(f"⚠️ Error inicializando patrones legítimos: {e}")
+            print(f"   Traceback: {traceback.format_exc()}")
+            # Asegurar que legitimate_patterns sea None si falla
             self.legitimate_patterns = None
         
         # Crear interfaz mejorada con estilo moderno
@@ -4559,25 +4572,13 @@ class MinecraftSSApp:
                                         import sys
                                         
                                         # Determinar ubicación persistente para config.json
+                                        # SIEMPRE usar AppData\Roaming para ejecutables compilados (más persistente)
                                         if getattr(sys, 'frozen', False):
-                                            # Si está compilado, guardar junto al ejecutable o en AppData\Roaming
-                                            exe_dir = os.path.dirname(sys.executable)
-                                            # Intentar guardar junto al .exe primero
-                                            config_path = os.path.join(exe_dir, 'config.json')
-                                            
-                                            # Si no se puede escribir ahí (permisos), usar AppData\Roaming
-                                            try:
-                                                # Probar si podemos escribir
-                                                test_file = os.path.join(exe_dir, '.test_write')
-                                                with open(test_file, 'w') as f:
-                                                    f.write('test')
-                                                os.remove(test_file)
-                                            except:
-                                                # No se puede escribir, usar AppData\Roaming
-                                                appdata_roaming = os.path.join(os.environ.get('APPDATA', ''), 'ASPERSProjectsSS')
-                                                os.makedirs(appdata_roaming, exist_ok=True)
-                                                config_path = os.path.join(appdata_roaming, 'config.json')
-                                                print(f"📁 Guardando config en AppData\Roaming (no se puede escribir junto al .exe)")
+                                            # Usar AppData\Roaming (persistente, no temporal)
+                                            appdata_roaming = os.path.join(os.environ.get('APPDATA', ''), 'ASPERSProjectsSS')
+                                            os.makedirs(appdata_roaming, exist_ok=True)
+                                            config_path = os.path.join(appdata_roaming, 'config.json')
+                                            print(f"📁 Guardando config en ubicación persistente: {config_path}")
                                         else:
                                             # Si está en desarrollo, buscar en el directorio del script
                                             script_dir = os.path.dirname(os.path.abspath(__file__))

@@ -705,48 +705,64 @@ def create_scan_token():
         
         print(f"🔑 Token generado: {token[:30]}... (longitud: {len(token)})")
         
-        with get_db_cursor() as cursor:
-            # Verificar que la tabla existe
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scan_tokens'")
-            table_exists = cursor.fetchone()
-            if not table_exists:
-                print("⚠️ Tabla scan_tokens no existe, inicializando BD...")
-                init_db()
-            
-            cursor.execute('''
-                INSERT INTO scan_tokens (token, expires_at, max_uses, description, created_by)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (token, expires_at, max_uses, description, created_by))
-            
-            token_id = cursor.lastrowid
-            
-            # Verificar que se guardó correctamente
-            cursor.execute('SELECT token FROM scan_tokens WHERE id = ?', (token_id,))
-            saved_token = cursor.fetchone()
-            if saved_token:
-                print(f"✅ Token guardado correctamente en BD: ID={token_id}, Token guardado={saved_token[0][:30]}...")
-            else:
-                print(f"❌ ERROR: Token no se encontró después de guardar!")
-            
-            # Contar total de tokens
-            cursor.execute('SELECT COUNT(*) FROM scan_tokens')
-            total_tokens = cursor.fetchone()[0]
-            print(f"📊 Total de tokens en BD: {total_tokens}")
-            
-            # Limpiar caché relacionado (importante para que la validación funcione)
-            clear_cache('tokens')
-            clear_cache('token_')
-            print(f"🧹 Caché limpiado")
-            
-            print(f"✅ Token creado exitosamente: ID={token_id}, Token={token[:30]}..., Creado por={created_by}")
-            
-            return jsonify({
-                'success': True,
-                'token': token,
-                'token_id': token_id,
-                'expires_at': expires_at,
-                'max_uses': max_uses
-            }), 201
+        try:
+            with get_db_cursor() as cursor:
+                # Verificar que la tabla existe
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scan_tokens'")
+                table_exists = cursor.fetchone()
+                if not table_exists:
+                    print("⚠️ Tabla scan_tokens no existe, inicializando BD...")
+                    init_db()
+                
+                cursor.execute('''
+                    INSERT INTO scan_tokens (token, expires_at, max_uses, description, created_by)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (token, expires_at, max_uses, description, created_by))
+                
+                token_id = cursor.lastrowid
+                print(f"✅ Token insertado con ID: {token_id}")
+                
+                # El commit se hace automáticamente por el context manager
+                # Pero verificamos inmediatamente después
+                cursor.execute('SELECT token, created_at FROM scan_tokens WHERE id = ?', (token_id,))
+                saved_token = cursor.fetchone()
+                if saved_token:
+                    print(f"✅ Token guardado correctamente en BD: ID={token_id}, Token guardado={saved_token[0][:30]}..., Creado={saved_token[1]}")
+                else:
+                    print(f"❌ ERROR: Token no se encontró después de guardar!")
+                    return jsonify({'error': 'Error al guardar token en la base de datos'}), 500
+                
+                # Contar total de tokens
+                cursor.execute('SELECT COUNT(*) FROM scan_tokens')
+                total_tokens = cursor.fetchone()[0]
+                print(f"📊 Total de tokens en BD: {total_tokens}")
+                
+                # Verificar persistencia con una nueva consulta
+                cursor.execute('SELECT COUNT(*) FROM scan_tokens WHERE id = ?', (token_id,))
+                token_exists = cursor.fetchone()[0]
+                if token_exists == 0:
+                    print(f"❌ ERROR CRÍTICO: Token no persistido después del commit!")
+                    return jsonify({'error': 'Error al persistir token en la base de datos'}), 500
+                
+                # Limpiar caché relacionado (importante para que la validación funcione)
+                clear_cache('tokens')
+                clear_cache('token_')
+                print(f"🧹 Caché limpiado")
+                
+                print(f"✅ Token creado exitosamente: ID={token_id}, Token={token[:30]}..., Creado por={created_by}")
+                
+                return jsonify({
+                    'success': True,
+                    'token': token,
+                    'token_id': token_id,
+                    'expires_at': expires_at,
+                    'max_uses': max_uses
+                }), 201
+        except Exception as e:
+            print(f"❌ Error en transacción de creación de token: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise
     except Exception as e:
         print(f"❌ Error creando token: {str(e)}")
         import traceback
@@ -883,6 +899,7 @@ def start_scan():
     # Incrementar contador de usos y desactivar si alcanzó el límite - OPTIMIZADO
     try:
         with get_db_cursor() as cursor:
+            # Actualizar contador de usos del token
             cursor.execute('''
                 UPDATE scan_tokens 
                 SET used_count = used_count + 1,
@@ -893,6 +910,14 @@ def start_scan():
                 WHERE id = ?
             ''', (token_id,))
             
+            # Verificar que el token se actualizó correctamente
+            cursor.execute('SELECT used_count, is_active FROM scan_tokens WHERE id = ?', (token_id,))
+            token_update = cursor.fetchone()
+            if token_update:
+                print(f"✅ Token actualizado: used_count={token_update[0]}, is_active={token_update[1]}")
+            else:
+                print(f"⚠️ ADVERTENCIA: No se pudo verificar actualización del token")
+            
             # Crear registro de escaneo
             cursor.execute('''
                 INSERT INTO scans (token_id, scan_token, status, machine_id, machine_name, ip_address, country, minecraft_username)
@@ -900,6 +925,15 @@ def start_scan():
             ''', (token_id, scan_token, machine_id, machine_name, ip_address, country, minecraft_username))
             
             scan_id = cursor.lastrowid
+            print(f"✅ Escaneo creado con ID: {scan_id}")
+            
+            # Verificar que el escaneo se guardó correctamente
+            cursor.execute('SELECT id, status FROM scans WHERE id = ?', (scan_id,))
+            scan_check = cursor.fetchone()
+            if scan_check:
+                print(f"✅ Escaneo verificado: ID={scan_check[0]}, Status={scan_check[1]}")
+            else:
+                print(f"❌ ERROR: Escaneo no encontrado después de crear!")
             
             # Limpiar caché relacionado
             clear_cache('token_')
@@ -969,13 +1003,21 @@ def submit_scan_results(scan_id):
                 # Preparar datos para batch insert
                 batch_data = []
                 for idx, result in enumerate(results):
+                    # Mapear campos: el scanner envía 'tipo', 'nombre', 'ruta', 'archivo', etc.
+                    # La BD espera: issue_type, issue_name, issue_path, etc.
+                    issue_type = result.get('tipo', '')
+                    issue_name = result.get('nombre', '') or result.get('archivo', '')
+                    issue_path = result.get('ruta', '')
+                    issue_category = result.get('categoria', '')
+                    alert_level = result.get('alerta', '')
+                    
                     batch_data.append((
                         scan_id,
-                        result.get('tipo', ''),
-                        result.get('nombre', ''),
-                        result.get('ruta', ''),
-                        result.get('categoria', ''),
-                        result.get('alerta', ''),
+                        issue_type,
+                        issue_name,
+                        issue_path,
+                        issue_category,
+                        alert_level,
                         result.get('confidence', 0),
                         json.dumps(result.get('detected_patterns', [])),
                         result.get('obfuscation', False),
@@ -995,10 +1037,18 @@ def submit_scan_results(scan_id):
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', batch_data)
                 
-                # Verificar cuántos resultados se insertaron
+                print(f"✅ Batch insert completado para {len(results)} resultados")
+                
+                # El commit se hace automáticamente por el context manager
+                # Verificar cuántos resultados se insertaron DESPUÉS del commit
                 cursor.execute('SELECT COUNT(*) FROM scan_results WHERE scan_id = ?', (scan_id,))
                 total_inserted = cursor.fetchone()[0]
-                print(f"✅ {len(results)} resultados insertados. Total en BD para este scan: {total_inserted}")
+                print(f"✅ Verificación después del commit: {total_inserted} resultados en BD para este scan")
+                
+                if total_inserted < len(results):
+                    print(f"⚠️ ADVERTENCIA: Se insertaron {len(results)} resultados pero solo {total_inserted} están en BD")
+                else:
+                    print(f"✅ Todos los resultados fueron insertados correctamente")
             else:
                 print(f"⚠️ No hay resultados para insertar (lista vacía)")
             

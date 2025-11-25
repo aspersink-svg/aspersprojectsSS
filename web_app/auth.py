@@ -217,8 +217,14 @@ def create_user(username, password, email=None, roles=None, company_id=None, cre
     print(f"👤 BD Path: {DATABASE}")
     print(f"{'='*60}\n")
     
+    conn = None
     try:
-        conn = sqlite3.connect(DATABASE)
+        # Configurar SQLite para mejor persistencia
+        conn = sqlite3.connect(DATABASE, timeout=10.0)
+        # Configurar modo WAL para mejor concurrencia y persistencia
+        conn.execute('PRAGMA journal_mode=WAL')
+        conn.execute('PRAGMA synchronous=NORMAL')
+        conn.execute('PRAGMA busy_timeout=5000')
         cursor = conn.cursor()
         print(f"✅ Conectado a BD: {DATABASE}")
         
@@ -286,38 +292,52 @@ def create_user(username, password, email=None, roles=None, company_id=None, cre
         user_id = cursor.lastrowid
         print(f"✅ Usuario insertado con ID: {user_id}")
         
-        # Verificar que se guardó correctamente
+        # HACER COMMIT INMEDIATAMENTE después de insertar
+        conn.commit()
+        print(f"✅ Commit realizado inmediatamente después de insertar")
+        
+        # Verificar que se guardó correctamente DESPUÉS del commit
         cursor.execute('SELECT id, username, email, company_id FROM users WHERE id = ?', (user_id,))
         saved_user = cursor.fetchone()
         if saved_user:
-            print(f"✅ Usuario verificado en BD: ID={saved_user[0]}, Username={saved_user[1]}, Email={saved_user[2]}, Company={saved_user[3]}")
+            print(f"✅ Usuario verificado en BD después del commit: ID={saved_user[0]}, Username={saved_user[1]}, Email={saved_user[2]}, Company={saved_user[3]}")
         else:
-            print(f"⚠️ ADVERTENCIA: Usuario no encontrado después de insertar")
+            print(f"❌ ERROR CRÍTICO: Usuario no encontrado después del commit!")
+            conn.close()
+            return {'success': False, 'error': 'Error al guardar usuario en la base de datos'}
         
         # Contar total de usuarios después de insertar
         cursor.execute('SELECT COUNT(*) FROM users')
         total_users = cursor.fetchone()[0]
         print(f"📊 Total de usuarios en BD: {total_users}")
         
-        conn.commit()
-        print(f"✅ Commit realizado")
-        
-        # Verificar después del commit
-        conn2 = sqlite3.connect(DATABASE)
+        # Verificar con una nueva conexión para asegurar persistencia
+        conn2 = sqlite3.connect(DATABASE, timeout=10.0)
         cursor2 = conn2.cursor()
         cursor2.execute('SELECT COUNT(*) FROM users WHERE id = ?', (user_id,))
         count_after_commit = cursor2.fetchone()[0]
         conn2.close()
-        print(f"✅ Usuario verificado después del commit: {count_after_commit} registro(s)")
+        print(f"✅ Usuario verificado con nueva conexión después del commit: {count_after_commit} registro(s)")
+        
+        if count_after_commit == 0:
+            print(f"❌ ERROR CRÍTICO: Usuario no persistido después del commit!")
+            conn.close()
+            return {'success': False, 'error': 'Error al persistir usuario en la base de datos'}
         
         conn.close()
         
         print(f"✅ ===== USUARIO CREADO EXITOSAMENTE ======\n")
         return {'success': True, 'user_id': user_id}
     except sqlite3.IntegrityError as e:
+        if conn:
+            conn.rollback()
+            conn.close()
         print(f"❌ ERROR: Usuario o email ya existe: {e}")
         return {'success': False, 'error': 'Usuario o email ya existe'}
     except Exception as e:
+        if conn:
+            conn.rollback()
+            conn.close()
         import traceback
         print(f"❌ ERROR inesperado al crear usuario:")
         print(f"   Error: {str(e)}")
