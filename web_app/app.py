@@ -2824,9 +2824,15 @@ def create_download_link():
     from datetime import datetime, timedelta
     from auth import is_admin, DATABASE
     
+    print(f"🔗 Solicitud de creación de enlace de descarga recibida")
+    print(f"📋 Datos recibidos: {request.json}")
+    
     # Verificar permisos (solo staff/admin)
     user_id = session.get('user_id')
+    print(f"👤 User ID: {user_id}")
+    
     if not is_admin(user_id):
+        print(f"❌ Usuario {user_id} no tiene permisos de admin")
         return jsonify({'error': 'No tienes permisos para crear enlaces de descarga'}), 403
     
     data = request.json or {}
@@ -2835,8 +2841,13 @@ def create_download_link():
     max_downloads = data.get('max_downloads', 1)  # Por defecto 1 descarga
     description = data.get('description', '')
     
+    print(f"📁 Archivo: {filename}")
+    print(f"⏰ Expira en: {expires_hours} horas")
+    print(f"📊 Máximo de descargas: {max_downloads}")
+    
     # Generar token único
     token = secrets.token_urlsafe(32)
+    print(f"🔑 Token generado: {token[:20]}...")
     
     # Calcular fecha de expiración
     expires_at = datetime.now() + timedelta(hours=expires_hours)
@@ -2854,6 +2865,8 @@ def create_download_link():
         conn.commit()
         conn.close()
         
+        print(f"✅ Enlace guardado en BD con ID: {link_id}")
+        
         # Generar URL completa
         base_url = request.host_url.rstrip('/')
         if IS_RENDER:
@@ -2861,6 +2874,8 @@ def create_download_link():
             if render_url:
                 base_url = render_url.rstrip('/')
         download_url = f"{base_url}/d/{token}"
+        
+        print(f"🌐 URL generada: {download_url}")
         
         return jsonify({
             'success': True,
