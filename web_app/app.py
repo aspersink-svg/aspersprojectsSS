@@ -1121,32 +1121,45 @@ def list_tokens():
         headers = {}
         if API_KEY:
             headers['X-API-Key'] = API_KEY
+            print(f"🔑 Enviando API Key para listar tokens: {API_KEY[:10] if API_KEY else 'None'}...")
+        else:
+            print("⚠️ No hay API_KEY configurada para listar tokens")
         
         try:
+            api_url = get_api_url('/api/tokens')
+            print(f"🌐 Obteniendo tokens desde: {api_url}")
             response = requests.get(
-                get_api_url('/api/tokens'),
+                api_url,
                 headers=headers,
-                timeout=5  # Timeout corto para no ralentizar la página
+                timeout=10  # Aumentado para Render
             )
+            
+            print(f"📡 Respuesta de API al listar tokens: Status {response.status_code}")
             
             if response.status_code == 200:
                 data = response.json()
                 tokens = data.get('tokens', [])
+                print(f"📋 Tokens recibidos de la API: {len(tokens)} tokens")
                 
                 # Filtrar por usuario si no es admin
                 if not is_admin_user:
+                    tokens_before_filter = len(tokens)
                     tokens = [t for t in tokens if t.get('created_by') == username]
+                    print(f"🔍 Filtrando tokens por usuario '{username}': {tokens_before_filter} -> {len(tokens)} tokens")
                 
                 return jsonify({'success': True, 'tokens': tokens})
             else:
                 # Si hay error, retornar lista vacía en lugar de fallar
-                print(f"⚠️ Error obteniendo tokens: {response.status_code}")
+                error_text = response.text[:200] if hasattr(response, 'text') else 'N/A'
+                print(f"⚠️ Error obteniendo tokens: {response.status_code} - {error_text}")
                 return jsonify({'success': True, 'tokens': []})
         except requests.exceptions.Timeout:
             print(f"⏱️ Timeout obteniendo tokens, retornando lista vacía")
             return jsonify({'success': True, 'tokens': []})
         except Exception as e:
             print(f"⚠️ Error obteniendo tokens: {str(e)}, retornando lista vacía")
+            import traceback
+            print(traceback.format_exc())
             return jsonify({'success': True, 'tokens': []})
             
     except Exception as e:

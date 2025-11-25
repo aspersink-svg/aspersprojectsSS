@@ -722,6 +722,11 @@ def create_scan_token():
                 token_id = cursor.lastrowid
                 print(f"✅ Token insertado con ID: {token_id}")
                 
+                # Limpiar caché de tokens para asegurar que se vean los nuevos tokens
+                clear_cache('tokens')
+                clear_cache('token_')
+                print(f"🗑️ Caché de tokens limpiado")
+                
                 # El commit se hace automáticamente por el context manager
                 # Pero verificamos inmediatamente después
                 cursor.execute('SELECT token, created_at FROM scan_tokens WHERE id = ?', (token_id,))
@@ -773,10 +778,11 @@ def create_scan_token():
 @require_api_key
 def list_tokens():
     """Lista todos los tokens de escaneo - OPTIMIZADO"""
-    cache_key = 'tokens_list'
-    cached = get_cached(cache_key)
-    if cached:
-        return jsonify(cached)
+    # NO usar caché para asegurar que siempre se obtengan los tokens más recientes
+    # cache_key = 'tokens_list'
+    # cached = get_cached(cache_key)
+    # if cached:
+    #     return jsonify(cached)
     
     try:
         with get_db_cursor() as cursor:
@@ -810,8 +816,11 @@ def list_tokens():
                 })
             
             print(f"📋 Listando tokens: {len(tokens)} tokens encontrados")
+            if tokens:
+                print(f"📋 Primer token: ID={tokens[0].get('id')}, created_by={tokens[0].get('created_by')}")
             result = {'tokens': tokens, 'count': len(tokens)}
-            set_cached(cache_key, result)
+            # NO cachear para asegurar datos frescos
+            # set_cached(cache_key, result)
             return jsonify(result)
     except Exception as e:
         print(f"❌ Error listando tokens: {str(e)}")

@@ -483,8 +483,10 @@ async function createToken() {
             document.getElementById('token-max-uses').value = '-1';
             // Mostrar modal de resultado
             document.getElementById('token-result-modal').classList.add('active');
-            // Recargar lista de tokens
-            loadTokens();
+            // Recargar lista de tokens después de un pequeño delay para asegurar que la API procese la creación
+            setTimeout(() => {
+                loadTokens();
+            }, 500);
         } else {
             alert('Error al crear token: ' + (data.error || 'Error desconocido'));
         }
