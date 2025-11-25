@@ -1690,7 +1690,7 @@ def list_scans():
                 print(f"📋 Primeros escaneos recibidos:")
                 for i, scan in enumerate(result.get('scans', [])[:3]):
                     print(f"   [{i+1}] Scan ID: {scan.get('id')}, Machine: {scan.get('machine_name')}, Issues: {scan.get('issues_found')}, Status: {scan.get('status')}")
-        else:
+            else:
                 print(f"⚠️ La API devolvió 200 pero sin escaneos en la respuesta")
                 print(f"📋 Respuesta completa: {result}")
             
