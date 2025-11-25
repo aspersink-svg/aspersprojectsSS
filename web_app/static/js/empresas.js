@@ -107,7 +107,7 @@ async function loadCompanyTokens() {
                             <td>${token.created_by || 'N/A'}</td>
                             <td><span class="badge ${statusBadge}">${statusText}</span></td>
                             <td>
-                                <button class="btn btn-sm btn-danger" onclick="deleteToken(${token.id})" title="Eliminar permanentemente este token">
+                                <button class="btn btn-sm btn-danger" onclick="if(typeof deleteToken === 'function') { deleteToken(${token.id}); } else { alert('Función deleteToken no disponible'); }" title="Eliminar permanentemente este token">
                                     🗑️ Eliminar
                                 </button>
                             </td>

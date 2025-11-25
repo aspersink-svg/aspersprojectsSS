@@ -537,7 +537,13 @@ async function deleteToken(tokenId) {
         
         if (data.success) {
             alert('✅ Token eliminado permanentemente.\n\nLos clientes que usen este token no podrán autenticarse.');
-            loadTokens();
+            // Recargar tokens según la sección actual
+            if (typeof loadTokens === 'function') {
+                loadTokens();
+            }
+            if (typeof loadCompanyTokens === 'function') {
+                loadCompanyTokens();
+            }
         } else {
             alert('Error al eliminar token: ' + (data.error || 'Error desconocido'));
         }
@@ -545,6 +551,9 @@ async function deleteToken(tokenId) {
         alert('Error al eliminar token: ' + error.message);
     }
 }
+
+// Hacer la función disponible globalmente
+window.deleteToken = deleteToken;
 
 // ============================================================
 // ESCANEOS Y RESULTADOS
