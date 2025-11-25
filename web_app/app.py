@@ -2711,10 +2711,9 @@ def download_with_token(token):
                     traceback.print_exc()
                     # Continuar con la descarga normal si falla la creación del ZIP
             
-        return send_file(file_path, as_attachment=True, download_name=filename)
-    else:
-        return jsonify({'error': f'Archivo no encontrado: {filename}'}), 404
-            
+            return send_file(file_path, as_attachment=True, download_name=filename)
+        else:
+            return jsonify({'error': f'Archivo no encontrado: {filename}'}), 404
     except Exception as e:
         import traceback
         print(f"❌ Error en download_with_token: {e}")
