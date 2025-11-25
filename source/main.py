@@ -463,7 +463,10 @@ class MinecraftSSApp:
             except:
                 pass
         
-        # Verificar autenticación antes de continuar
+        # Cargar configuración PRIMERO para verificar si hay token
+        self.config = self.load_config()
+        
+        # Verificar autenticación después de cargar config
         try:
             auth_result = self.check_authentication()
             if not auth_result:
@@ -485,7 +488,6 @@ class MinecraftSSApp:
         # Variables
         self.scanning = False
         self.issues_found = []
-        self.config = self.load_config()
         self.detected_minecraft_username = None  # Username detectado desde conexiones activas
         
         # Variables de monitoreo temporal
@@ -4519,6 +4521,37 @@ class MinecraftSSApp:
             import requests
             import json
             
+            # PRIMERO: Verificar si ya hay un token válido en el config
+            scan_token = self.config.get('scan_token', '')
+            if scan_token:
+                print(f"🔑 Token encontrado en config, verificando validez...")
+                api_url = self.config.get('api_url', 'https://ssapi-cfni.onrender.com')
+                
+                # Intentar validar el token sin mostrar ventana
+                try:
+                    response = requests.post(
+                        f"{api_url}/api/validate-token",
+                        json={'token': scan_token},
+                        timeout=10
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get('valid', False):
+                            print(f"✅ Token válido encontrado en config, autenticación automática exitosa")
+                            # Actualizar db_integration si existe
+                            if hasattr(self, 'db_integration') and self.db_integration:
+                                self.db_integration.scan_token = scan_token
+                            return True
+                        else:
+                            print(f"⚠️ Token en config no es válido, solicitando nuevo token")
+                    else:
+                        print(f"⚠️ Error validando token existente: {response.status_code}")
+                except Exception as e:
+                    print(f"⚠️ Error validando token existente: {e}")
+                    # Continuar con el flujo normal de autenticación
+            
+            # Si no hay token válido, mostrar ventana de autenticación
             # Crear ventana de autenticación con estilo ASPERS PROJECTS
             auth_window = tk.Toplevel(self.root)
             auth_window.title("Aspers Projects - Autenticación Requerida")
