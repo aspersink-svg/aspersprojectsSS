@@ -1201,9 +1201,12 @@ def list_tokens():
                     if not is_admin_user:
                         print(f"🔍 Filtrando por usuario '{username}': {len(tokens)} tokens antes del filtro")
                     
+                    # Devolver TODOS los tokens del usuario (activos, usados y expirados)
                     return jsonify({'success': True, 'tokens': tokens})
             except Exception as e:
                 print(f"Error accediendo BD local, usando HTTP: {str(e)}")
+                import traceback
+                print(traceback.format_exc())
                 # Continuar con HTTP si falla acceso local
         
         # Si no está disponible localmente (Render con servicios separados), usar HTTP con timeout corto
@@ -1230,14 +1233,15 @@ def list_tokens():
                 tokens = data.get('tokens', [])
                 print(f"📋 Tokens recibidos de la API: {len(tokens)} tokens")
                 
-                # Filtrar por usuario si no es admin
+                # Filtrar por usuario si no es admin (mostrar TODOS los tokens del usuario, activos o no)
                 if not is_admin_user:
                     tokens_before_filter = len(tokens)
                     print(f"🔍 Tokens antes del filtro: {tokens_before_filter}")
                     for t in tokens:
                         print(f"  - Token ID={t.get('id')}, created_by='{t.get('created_by')}', username='{username}', match={t.get('created_by') == username}")
+                    # Filtrar por usuario pero SIN filtrar por estado (mostrar activos, usados y expirados)
                     tokens = [t for t in tokens if t.get('created_by') == username]
-                    print(f"🔍 Filtrando tokens por usuario '{username}': {tokens_before_filter} -> {len(tokens)} tokens")
+                    print(f"🔍 Filtrando tokens por usuario '{username}': {tokens_before_filter} -> {len(tokens)} tokens (incluyendo usados y expirados)")
                 
                 return jsonify({'success': True, 'tokens': tokens})
             else:
@@ -1379,8 +1383,8 @@ def create_token():
                     print(f"⚠️ Error creando enlace de descarga automático: {e}")
                     # No fallar si no se puede crear el enlace, solo continuar
                 
-                return jsonify({
-                    'success': True,
+            return jsonify({
+                'success': True,
                     'token': token,
                     'token_id': token_id,
                     'expires_at': expires_at,
@@ -1389,7 +1393,7 @@ def create_token():
                     'created_by': created_by,
                     'type': 'scan_token',  # Indicar que es un token de escaneo (NO de registro)
                     'download_url': download_link  # URL pública para descargar el ejecutable
-                }), 201
+            }), 201
             except Exception as e:
                 print(f"⚠️ Error accediendo BD local, usando HTTP: {str(e)}")
                 use_http = True  # Forzar HTTP si falla
@@ -1403,7 +1407,7 @@ def create_token():
             if API_KEY:
                 headers['X-API-Key'] = API_KEY
                 print(f"🔑 Enviando API Key: {API_KEY[:10]}...")
-            else:
+        else:
                 print("⚠️ No hay API_KEY configurada, la API puede rechazar la petición")
             
             # Crear token a través de la API HTTP
@@ -1462,8 +1466,8 @@ def create_token():
                         else:
                             download_link = f"{base_url}/d/{download_token}"
                         print(f"🔗 Enlace de descarga creado: {download_link}")
-                    except Exception as e:
-                        import traceback
+    except Exception as e:
+        import traceback
                         print(f"⚠️ Error creando enlace de descarga automático: {e}")
                         print(traceback.format_exc())
                         # No fallar si no se puede crear el enlace, solo continuar
@@ -1526,7 +1530,7 @@ def delete_token(token_id):
             cursor.execute('SELECT id, created_by FROM scan_tokens WHERE id = ?', (token_id,))
             token_row = cursor.fetchone()
             if not token_row:
-                return jsonify({'success': False, 'error': 'Token no encontrado'}), 404
+            return jsonify({'success': False, 'error': 'Token no encontrado'}), 404
         
             token_creator = token_row[1]
             
@@ -1549,8 +1553,8 @@ def list_scans():
     """Lista escaneos - Usa BD directa si está disponible, sino HTTP"""
     import time
     
-    limit = request.args.get('limit', 50, type=int)
-    offset = request.args.get('offset', 0, type=int)
+        limit = request.args.get('limit', 50, type=int)
+        offset = request.args.get('offset', 0, type=int)
     
     # Caché por limit/offset (10 segundos TTL)
     cache_key = f'scans_list_{limit}_{offset}'
@@ -1682,7 +1686,7 @@ def list_scans():
                 print(f"📋 Primeros escaneos recibidos:")
                 for i, scan in enumerate(result.get('scans', [])[:3]):
                     print(f"   [{i+1}] Scan ID: {scan.get('id')}, Machine: {scan.get('machine_name')}, Issues: {scan.get('issues_found')}, Status: {scan.get('status')}")
-            else:
+        else:
                 print(f"⚠️ La API devolvió 200 pero sin escaneos en la respuesta")
                 print(f"📋 Respuesta completa: {result}")
             
@@ -2703,9 +2707,9 @@ def download_with_token(token):
                     traceback.print_exc()
                     # Continuar con la descarga normal si falla la creación del ZIP
             
-            return send_file(file_path, as_attachment=True, download_name=filename)
-        else:
-            return jsonify({'error': f'Archivo no encontrado: {filename}'}), 404
+        return send_file(file_path, as_attachment=True, download_name=filename)
+    else:
+        return jsonify({'error': f'Archivo no encontrado: {filename}'}), 404
             
     except Exception as e:
         import traceback
