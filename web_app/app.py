@@ -1254,7 +1254,7 @@ def create_token():
                         'created_by': created_by,
                         'type': 'scan_token'
             }), 201
-        else:
+                else:
                     error_text = response.text[:500] if response.text else 'Sin respuesta'
                     print(f"❌ Error de API: {response.status_code} - {error_text}")
                     try:
