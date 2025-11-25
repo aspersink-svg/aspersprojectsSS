@@ -506,6 +506,12 @@ class MinecraftSSApp:
             from db_integration import DatabaseIntegration
             api_url = self.config.get('api_url', 'https://ssapi-cfni.onrender.com')
             scan_token = self.config.get('scan_token', '')
+            
+            if scan_token:
+                print(f"🔑 Token de escaneo encontrado en config: {scan_token[:20]}...")
+            else:
+                print("⚠️ No hay token de escaneo en config.json")
+            
             self.db_integration = DatabaseIntegration(api_url=api_url, scan_token=scan_token)
             self.db_integration.app = self  # Pasar referencia de la app para acceso a username detectado
             print("✅ Integración con BD inicializada")
@@ -2205,18 +2211,19 @@ class MinecraftSSApp:
                 # Si está compilado, buscar config.json en ubicaciones persistentes
                 exe_dir = os.path.dirname(sys.executable)
                 
-                # 1. AppData\Roaming (más persistente, no requiere permisos de admin)
-                appdata_roaming = os.path.join(os.environ.get('APPDATA', ''), 'ASPERSProjectsSS', 'config.json')
-                possible_paths.append(appdata_roaming)
-                
-                # 2. Junto al ejecutable
+                # PRIORIDAD: Buscar primero junto al ejecutable (donde se extrae el ZIP)
+                # 1. Junto al ejecutable (PRIMERO - para detectar config.json del ZIP)
                 possible_paths.append(os.path.join(exe_dir, 'config.json'))
+                
+                # 2. Directorio actual (donde se ejecuta, puede ser diferente del exe_dir)
+                possible_paths.append(os.path.join(os.getcwd(), 'config.json'))
                 
                 # 3. Directorio padre del ejecutable
                 possible_paths.append(os.path.join(exe_dir, '..', 'config.json'))
                 
-                # 4. Directorio actual (fallback)
-                possible_paths.append(os.path.join(os.getcwd(), 'config.json'))
+                # 4. AppData\Roaming (más persistente, para guardar después)
+                appdata_roaming = os.path.join(os.environ.get('APPDATA', ''), 'ASPERSProjectsSS', 'config.json')
+                possible_paths.append(appdata_roaming)
             else:
                 # Si está en desarrollo, buscar en el directorio del script
                 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -2238,21 +2245,44 @@ class MinecraftSSApp:
                             
                             # Si hay un scan_token en el config, guardarlo automáticamente en ubicación persistente
                             if config.get('scan_token'):
-                                print(f"🔑 Token encontrado en config: {config.get('scan_token')[:20]}...")
+                                token_value = config.get('scan_token')
+                                print(f"🔑 Token encontrado en config: {token_value[:20]}...")
+                                
                                 # Guardar el config con el token en la ubicación persistente (AppData)
+                                # Esto asegura que el token esté disponible en futuras ejecuciones
                                 try:
                                     if getattr(sys, 'frozen', False):
                                         appdata_dir = os.path.join(os.environ.get('APPDATA', ''), 'ASPERSProjectsSS')
                                         os.makedirs(appdata_dir, exist_ok=True)
                                         persistent_config_path = os.path.join(appdata_dir, 'config.json')
                                         
+                                        # Leer config existente en AppData si existe, o usar el actual
+                                        persistent_config = config.copy()
+                                        if os.path.exists(persistent_config_path):
+                                            try:
+                                                with open(persistent_config_path, 'r', encoding='utf-8') as f:
+                                                    existing_config = json.load(f)
+                                                    # Preservar otros valores del config persistente
+                                                    persistent_config.update(existing_config)
+                                            except:
+                                                pass
+                                        
+                                        # Asegurar que el token esté presente
+                                        persistent_config['scan_token'] = token_value
+                                        
                                         # Guardar config con el token
                                         with open(persistent_config_path, 'w', encoding='utf-8') as f:
-                                            json.dump(config, f, indent=2)
+                                            json.dump(persistent_config, f, indent=2)
                                         print(f"✅ Token guardado en config persistente: {persistent_config_path}")
+                                        print(f"🔑 Token completo guardado: {token_value[:30]}...")
+                                        
+                                        # Usar el config persistente como principal
                                         self.config_path = persistent_config_path
+                                        return persistent_config
                                 except Exception as e:
                                     print(f"⚠️ Error guardando token en config persistente: {e}")
+                                    import traceback
+                                    traceback.print_exc()
                             
                             # Guardar la ruta para futuras escrituras
                             self.config_path = config_path
