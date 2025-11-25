@@ -1078,6 +1078,7 @@ def list_tokens():
             try:
                 # Listar tokens de ESCANEO desde la BD de la API (scan_tokens)
                 with get_api_db_cursor() as cursor:
+                    # Mostrar TODOS los tokens (activos, usados y expirados)
                     # Si es admin, mostrar todos los tokens. Si no, solo los del usuario
                     if is_admin_user:
                         cursor.execute('''
@@ -1187,6 +1188,45 @@ def create_token():
             return jsonify({'success': False, 'error': 'Usuario no encontrado'}), 401
         
         created_by = user.get('username', 'web_app')
+        user_id = user.get('id')
+        
+        # Verificar límite de 5 tokens por usuario (solo usuarios no-admin)
+        if not is_admin(user):
+            # Contar tokens activos del usuario
+            try:
+                if API_DB_AVAILABLE_LOCALLY and not IS_RENDER:
+                    # Contar desde BD local
+                    with get_api_db_cursor() as cursor:
+                        cursor.execute('''
+                            SELECT COUNT(*) FROM scan_tokens 
+                            WHERE created_by = ? AND is_active = 1
+                        ''', (created_by,))
+                        token_count = cursor.fetchone()[0]
+                else:
+                    # Contar desde API HTTP
+                    headers = {}
+                    if API_KEY:
+                        headers['X-API-Key'] = API_KEY
+                    response = requests.get(
+                        get_api_url('/api/tokens'),
+                        headers=headers,
+                        timeout=5
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        tokens = data.get('tokens', [])
+                        token_count = len([t for t in tokens if t.get('created_by') == created_by and t.get('is_active', True)])
+                    else:
+                        token_count = 0
+                
+                if token_count >= 5:
+                    return jsonify({
+                        'success': False, 
+                        'error': f'Has alcanzado el límite de 5 tokens activos. Elimina un token existente antes de crear uno nuevo.'
+                    }), 400
+            except Exception as e:
+                print(f"⚠️ Error verificando límite de tokens: {e}")
+                # Continuar si hay error al verificar (no bloquear creación)
         
         # En Render, SIEMPRE usar HTTP porque la BD está en otro servicio
         # Solo usar BD local si estamos en desarrollo y la BD está disponible
@@ -2448,8 +2488,8 @@ def download_with_token(token):
                 conn.close()
                 return jsonify({'error': 'Este enlace de descarga ha expirado'}), 410
         
-        # Verificar límite de descargas
-        if download_count >= max_downloads:
+        # Verificar límite de descargas (solo si max_downloads no es -1, que significa ilimitado)
+        if max_downloads != -1 and download_count >= max_downloads:
             conn.close()
             return jsonify({'error': 'Este enlace ha alcanzado el límite de descargas'}), 403
         
@@ -2460,8 +2500,8 @@ def download_with_token(token):
             WHERE id = ?
         ''', (link_id,))
         
-        # Si alcanzó el límite, desactivar el enlace
-        if download_count + 1 >= max_downloads:
+        # Si alcanzó el límite, desactivar el enlace (solo si max_downloads no es -1)
+        if max_downloads != -1 and download_count + 1 >= max_downloads:
             cursor.execute('''
                 UPDATE download_links
                 SET is_active = 0

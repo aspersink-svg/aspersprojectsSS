@@ -197,7 +197,8 @@ async function loadRecentScans() {
 
 async function loadTokens() {
     try {
-        const response = await fetch('/api/tokens?include_used=false');
+        // Cambiar a include_used=true para mostrar todos los tokens (activos, usados y expirados)
+        const response = await fetch('/api/tokens?include_used=true');
         if (!response.ok) {
             throw new Error(`Error ${response.status}: ${response.statusText}`);
         }
@@ -209,18 +210,34 @@ async function loadTokens() {
         if (tokens && tokens.length > 0) {
             tbody.innerHTML = tokens.map(token => {
                 const tokenStr = token.token || '';
-                const isUsed = token.is_used || false;
+                const usedCount = token.used_count || 0;
+                const maxUses = token.max_uses || -1;
+                const isUsed = maxUses > 0 && usedCount >= maxUses;
                 const expiresAt = token.expires_at ? new Date(token.expires_at) : null;
                 const isExpired = expiresAt && expiresAt < new Date();
-                const isActive = !isUsed && !isExpired;
+                const isActive = token.is_active !== false && !isUsed && !isExpired;
+                
+                // Determinar estado y badge
+                let statusText = 'Activo';
+                let statusBadge = 'badge-success';
+                if (isUsed) {
+                    statusText = 'Usado';
+                    statusBadge = 'badge-warning';
+                } else if (isExpired) {
+                    statusText = 'Expirado';
+                    statusBadge = 'badge-danger';
+                } else if (!isActive) {
+                    statusText = 'Inactivo';
+                    statusBadge = 'badge-secondary';
+                }
                 
                 return `
                 <tr>
                     <td><code>${tokenStr.substring(0, 20)}...</code></td>
                     <td>${token.created_at ? formatDate(token.created_at) : 'N/A'}</td>
-                    <td>${token.description || 'Sin descripción'}</td>
-                    <td>${expiresAt ? formatDate(expiresAt) : 'N/A'}</td>
-                    <td><span class="badge ${isActive ? 'badge-success' : 'badge-danger'}">${isActive ? 'Activo' : (isUsed ? 'Usado' : 'Expirado')}</span></td>
+                    <td>${token.created_by || 'N/A'}</td>
+                    <td>${usedCount}${maxUses > 0 ? ` / ${maxUses}` : ' / ∞'}</td>
+                    <td><span class="badge ${statusBadge}">${statusText}</span></td>
                     <td>
                         <button class="btn btn-sm btn-danger" onclick="deleteToken(${token.id || token.token_id})" title="Eliminar permanentemente este token">
                             🗑️ Eliminar
@@ -276,7 +293,10 @@ function setupEventListeners() {
     });
 
     // Botón de copiar token
-    document.getElementById('copy-token-btn')?.addEventListener('click', async () => {
+    document.getElementById('copy-token-btn')?.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
         const tokenElement = document.getElementById('generated-token');
         const token = tokenElement?.textContent;
         
