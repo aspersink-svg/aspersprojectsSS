@@ -319,6 +319,45 @@ function setupEventListeners() {
             document.body.removeChild(textArea);
         }
     });
+    
+    // Botón de copiar enlace de descarga desde el modal de token
+    document.getElementById('copy-download-link-from-token-btn')?.addEventListener('click', async () => {
+        const linkInput = document.getElementById('generated-download-link-from-token');
+        const link = linkInput?.value;
+        
+        if (!link) {
+            alert('No hay enlace para copiar');
+            return;
+        }
+        
+        try {
+            await navigator.clipboard.writeText(link);
+            const btn = document.getElementById('copy-download-link-from-token-btn');
+            const originalText = btn.textContent;
+            btn.textContent = '✓ Copiado!';
+            btn.style.background = '#22c55e';
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.style.background = '';
+            }, 2000);
+        } catch (err) {
+            // Fallback para navegadores que no soportan clipboard API
+            const textArea = document.createElement('textarea');
+            textArea.value = link;
+            textArea.style.position = 'fixed';
+            textArea.style.opacity = '0';
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                alert('✓ Enlace copiado al portapapeles');
+            } catch (err2) {
+                document.body.removeChild(textArea);
+                alert('Error al copiar: ' + err2.message);
+            }
+        }
+    });
 
     // Modal de feedback
     document.getElementById('close-feedback-modal')?.addEventListener('click', () => {
