@@ -1,94 +1,94 @@
 """
 API REST OPTIMIZADA para Aspers Projects Security Scanner
 Optimizaciones: conexión pooling, índices, caché, consultas optimizadas
+Migrado a MySQL para persistencia en Render
 """
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import sqlite3
 import json
 import hashlib
 import secrets
 import datetime
 from functools import wraps
 import os
-import threading
 import time
-from contextlib import contextmanager
+
+# Importar módulo MySQL
+try:
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from db_mysql import (
+        get_db_connection, 
+        get_db_cursor, 
+        init_mysql_db,
+        get_cached,
+        set_cached,
+        clear_cache
+    )
+    USE_MYSQL = True
+    print("✅ Usando MySQL para persistencia de datos")
+except ImportError as e:
+    print(f"⚠️ Error importando MySQL, intentando SQLite como fallback: {e}")
+    USE_MYSQL = False
+    import sqlite3
+    from contextlib import contextmanager
+    import threading
+    
+    # Fallback a SQLite
+    DATABASE = 'scanner_db.sqlite'
+    _local = threading.local()
+    
+    def get_db():
+        if not hasattr(_local, 'connection'):
+            _local.connection = sqlite3.connect(DATABASE, check_same_thread=False, timeout=5.0)
+            _local.connection.execute('PRAGMA journal_mode=WAL')
+            _local.connection.execute('PRAGMA synchronous=NORMAL')
+            _local.connection.row_factory = sqlite3.Row
+        return _local.connection
+    
+    @contextmanager
+    def get_db_cursor():
+        conn = get_db()
+        cursor = conn.cursor()
+        try:
+            yield cursor
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    
+    _cache = {}
+    _cache_timeout = {}
+    CACHE_TTL = 30
+    
+    def get_cached(key):
+        if key in _cache:
+            if time.time() - _cache_timeout.get(key, 0) < CACHE_TTL:
+                return _cache[key]
+            else:
+                del _cache[key]
+                del _cache_timeout[key]
+        return None
+    
+    def set_cached(key, value):
+        _cache[key] = value
+        _cache_timeout[key] = time.time()
+    
+    def clear_cache(pattern=None):
+        if pattern:
+            keys_to_delete = [k for k in _cache.keys() if pattern in k]
+            for k in keys_to_delete:
+                _cache.pop(k, None)
+                _cache_timeout.pop(k, None)
+        else:
+            _cache.clear()
+            _cache_timeout.clear()
 
 app = Flask(__name__)
 CORS(app)
 
 # Configuración
-DATABASE = 'scanner_db.sqlite'
 API_SECRET_KEY = os.environ.get('API_SECRET_KEY', secrets.token_hex(32))
-
-# ============================================================
-# OPTIMIZACIÓN: POOL DE CONEXIONES THREAD-LOCAL
-# ============================================================
-_local = threading.local()
-
-def get_db():
-    """Obtiene una conexión de base de datos thread-local (reutilizable)"""
-    if not hasattr(_local, 'connection'):
-        _local.connection = sqlite3.connect(
-            DATABASE,
-            check_same_thread=False,
-            timeout=5.0
-        )
-        # Optimizaciones críticas de SQLite para mejor rendimiento
-        _local.connection.execute('PRAGMA journal_mode=WAL')  # Write-Ahead Logging
-        _local.connection.execute('PRAGMA synchronous=NORMAL')  # Balance velocidad/seguridad
-        _local.connection.execute('PRAGMA cache_size=-64000')  # 64MB caché
-        _local.connection.execute('PRAGMA temp_store=MEMORY')  # Tablas temp en memoria
-        _local.connection.execute('PRAGMA mmap_size=268435456')  # 256MB memoria mapeada
-        _local.connection.execute('PRAGMA busy_timeout=5000')  # Timeout para bloqueos
-        _local.connection.row_factory = sqlite3.Row  # Acceso por nombre más rápido
-    return _local.connection
-
-@contextmanager
-def get_db_cursor():
-    """Context manager para operaciones de base de datos optimizado"""
-    conn = get_db()
-    cursor = conn.cursor()
-    try:
-        yield cursor
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-
-# ============================================================
-# OPTIMIZACIÓN: CACHÉ EN MEMORIA
-# ============================================================
-_cache = {}
-_cache_timeout = {}
-CACHE_TTL = 30  # 30 segundos TTL
-
-def get_cached(key):
-    """Obtiene un valor del caché si no ha expirado"""
-    if key in _cache:
-        if time.time() - _cache_timeout.get(key, 0) < CACHE_TTL:
-            return _cache[key]
-        else:
-            del _cache[key]
-            del _cache_timeout[key]
-    return None
-
-def set_cached(key, value):
-    """Guarda un valor en el caché"""
-    _cache[key] = value
-    _cache_timeout[key] = time.time()
-
-def clear_cache(pattern=None):
-    """Limpia el caché (opcionalmente por patrón)"""
-    if pattern:
-        keys_to_delete = [k for k in _cache.keys() if pattern in k]
-        for k in keys_to_delete:
-            _cache.pop(k, None)
-            _cache_timeout.pop(k, None)
-    else:
-        _cache.clear()
-        _cache_timeout.clear()
 
 # ============================================================
 # UTILIDADES DE BASE DE DATOS
@@ -96,16 +96,29 @@ def clear_cache(pattern=None):
 
 def init_db():
     """Inicializa la base de datos con todas las tablas e índices optimizados"""
-    conn = sqlite3.connect(DATABASE)
-    cursor = conn.cursor()
+    if USE_MYSQL:
+        # Usar MySQL
+        try:
+            init_mysql_db()
+            print("✅ Base de datos MySQL inicializada")
+            return
+        except Exception as e:
+            print(f"❌ Error inicializando MySQL: {e}")
+            print("⚠️ Intentando fallback a SQLite...")
+            # Continuar con SQLite como fallback
     
-    # Configurar optimizaciones de SQLite
-    cursor.execute('PRAGMA journal_mode=WAL')
-    cursor.execute('PRAGMA synchronous=NORMAL')
-    cursor.execute('PRAGMA cache_size=-64000')
-    cursor.execute('PRAGMA temp_store=MEMORY')
-    cursor.execute('PRAGMA mmap_size=268435456')
-    cursor.execute('PRAGMA busy_timeout=5000')
+    # Fallback a SQLite
+    if not USE_MYSQL:
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        
+        # Configurar optimizaciones de SQLite
+        cursor.execute('PRAGMA journal_mode=WAL')
+        cursor.execute('PRAGMA synchronous=NORMAL')
+        cursor.execute('PRAGMA cache_size=-64000')
+        cursor.execute('PRAGMA temp_store=MEMORY')
+        cursor.execute('PRAGMA mmap_size=268435456')
+        cursor.execute('PRAGMA busy_timeout=5000')
     
     # Tabla de tokens de escaneo
     cursor.execute('''
@@ -372,9 +385,9 @@ def init_db():
     except Exception as e:
         print(f"⚠️ Error creando índices de ban_history: {e}")
     
-    conn.commit()
-    conn.close()
-    print("✅ Base de datos inicializada con índices optimizados")
+        conn.commit()
+        conn.close()
+        print("✅ Base de datos SQLite inicializada con índices optimizados")
 
 # Inicializar base de datos inmediatamente al cargar el módulo
 # Esto asegura que las tablas existan siempre, sin importar cómo se ejecute la app
@@ -403,6 +416,21 @@ def require_api_key(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def _get_result_value(result, key_or_index):
+    """Helper para obtener valores de resultados (compatible SQLite/MySQL)"""
+    if USE_MYSQL:
+        # MySQL con DictCursor retorna diccionarios
+        return result.get(key_or_index) if isinstance(result, dict) else result[key_or_index]
+    else:
+        # SQLite retorna tuplas o Row objects
+        if isinstance(result, sqlite3.Row):
+            return result[key_or_index]
+        elif isinstance(key_or_index, int):
+            return result[key_or_index]
+        else:
+            # Intentar como índice numérico
+            return result[0]
+
 def validate_scan_token(token):
     """Valida un token de escaneo - OPTIMIZADO CON CACHÉ"""
     # Verificar caché primero
@@ -415,38 +443,50 @@ def validate_scan_token(token):
     try:
         print(f"🔍 Buscando token en BD: {token[:20]}...")
         with get_db_cursor() as cursor:
-            cursor.execute('''
+            # Usar %s para MySQL, ? para SQLite
+            placeholder = '%s' if USE_MYSQL else '?'
+            cursor.execute(f'''
                 SELECT id, expires_at, used_count, max_uses, is_active
                 FROM scan_tokens
-                WHERE token = ?
+                WHERE token = {placeholder}
             ''', (token,))
             
             result = cursor.fetchone()
             
             if not result:
                 # Verificar si el token existe con diferentes formatos (por si hay espacios)
-                cursor.execute('''
-                    SELECT COUNT(*) FROM scan_tokens
-                ''')
-                total_tokens = cursor.fetchone()[0]
+                cursor.execute('SELECT COUNT(*) as count FROM scan_tokens')
+                total_result = cursor.fetchone()
+                total_tokens = _get_result_value(total_result, 'count') if USE_MYSQL else total_result[0]
                 print(f"⚠️ Token no encontrado. Total de tokens en BD: {total_tokens}")
                 print(f"⚠️ Token buscado (primeros 30 chars): {token[:30]}")
                 
                 # Listar algunos tokens para debug (solo primeros caracteres)
-                cursor.execute('''
-                    SELECT token FROM scan_tokens ORDER BY created_at DESC LIMIT 5
-                ''')
+                cursor.execute('SELECT token FROM scan_tokens ORDER BY created_at DESC LIMIT 5')
                 sample_tokens = cursor.fetchall()
                 if sample_tokens:
                     print(f"📋 Tokens recientes en BD:")
                     for t in sample_tokens:
-                        print(f"   - {t[0][:30]}...")
+                        token_val = _get_result_value(t, 'token') if USE_MYSQL else t[0]
+                        print(f"   - {token_val[:30]}...")
                 
                 result_data = {'token_id': None, 'error': 'Token no encontrado'}
                 set_cached(cache_key, result_data)
                 return None, "Token no encontrado"
             
-            token_id, expires_at, used_count, max_uses, is_active = result
+            # Extraer valores según el tipo de BD
+            if USE_MYSQL:
+                token_id = result.get('id')
+                expires_at = result.get('expires_at')
+                used_count = result.get('used_count', 0)
+                max_uses = result.get('max_uses', -1)
+                is_active = result.get('is_active', 1)
+            else:
+                token_id = result[0]
+                expires_at = result[1]
+                used_count = result[2] if len(result) > 2 else 0
+                max_uses = result[3] if len(result) > 3 else -1
+                is_active = result[4] if len(result) > 4 else 1
             
             if not is_active:
                 result_data = {'token_id': None, 'error': 'Token desactivado'}
@@ -454,7 +494,10 @@ def validate_scan_token(token):
                 return None, "Token desactivado"
             
             if expires_at:
-                expires = datetime.datetime.fromisoformat(expires_at)
+                if isinstance(expires_at, str):
+                    expires = datetime.datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+                else:
+                    expires = expires_at
                 if datetime.datetime.now() > expires:
                     result_data = {'token_id': None, 'error': 'Token expirado'}
                     set_cached(cache_key, result_data)
@@ -723,10 +766,13 @@ def create_scan_token():
                 print(f"✅ Token insertado con ID: {token_id}, created_by='{created_by}'")
                 
                 # Verificar inmediatamente que se guardó correctamente
-                cursor.execute('SELECT token, created_by, created_at FROM scan_tokens WHERE id = ?', (token_id,))
+                placeholder = '%s' if USE_MYSQL else '?'
+                cursor.execute(f'SELECT token, created_by, created_at FROM scan_tokens WHERE id = {placeholder}', (token_id,))
                 verification = cursor.fetchone()
                 if verification:
-                    print(f"✅ Verificación: Token guardado correctamente - created_by='{verification[1]}', created_at={verification[2]}")
+                    created_by_val = verification.get('created_by') if USE_MYSQL else verification[1]
+                    created_at_val = verification.get('created_at') if USE_MYSQL else verification[2]
+                    print(f"✅ Verificación: Token guardado correctamente - created_by='{created_by_val}', created_at={created_at_val}")
                 else:
                     print(f"❌ ERROR: Token no encontrado después de insertar!")
                 
@@ -737,22 +783,26 @@ def create_scan_token():
                 
                 # El commit se hace automáticamente por el context manager
                 # Pero verificamos inmediatamente después
-                cursor.execute('SELECT token, created_at FROM scan_tokens WHERE id = ?', (token_id,))
+                cursor.execute(f'SELECT token, created_at FROM scan_tokens WHERE id = {placeholder}', (token_id,))
                 saved_token = cursor.fetchone()
                 if saved_token:
-                    print(f"✅ Token guardado correctamente en BD: ID={token_id}, Token guardado={saved_token[0][:30]}..., Creado={saved_token[1]}")
+                    token_val = saved_token.get('token') if USE_MYSQL else saved_token[0]
+                    created_at_val = saved_token.get('created_at') if USE_MYSQL else saved_token[1]
+                    print(f"✅ Token guardado correctamente en BD: ID={token_id}, Token guardado={token_val[:30]}..., Creado={created_at_val}")
                 else:
                     print(f"❌ ERROR: Token no se encontró después de guardar!")
                     return jsonify({'error': 'Error al guardar token en la base de datos'}), 500
                 
                 # Contar total de tokens
-                cursor.execute('SELECT COUNT(*) FROM scan_tokens')
-                total_tokens = cursor.fetchone()[0]
+                cursor.execute('SELECT COUNT(*) as count FROM scan_tokens')
+                total_result = cursor.fetchone()
+                total_tokens = total_result.get('count') if USE_MYSQL else total_result[0]
                 print(f"📊 Total de tokens en BD: {total_tokens}")
                 
                 # Verificar persistencia con una nueva consulta
-                cursor.execute('SELECT COUNT(*) FROM scan_tokens WHERE id = ?', (token_id,))
-                token_exists = cursor.fetchone()[0]
+                cursor.execute(f'SELECT COUNT(*) as count FROM scan_tokens WHERE id = {placeholder}', (token_id,))
+                token_result = cursor.fetchone()
+                token_exists = token_result.get('count') if USE_MYSQL else token_result[0]
                 if token_exists == 0:
                     print(f"❌ ERROR CRÍTICO: Token no persistido después del commit!")
                     return jsonify({'error': 'Error al persistir token en la base de datos'}), 500

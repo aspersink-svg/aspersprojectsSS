@@ -1,0 +1,439 @@
+"""
+Módulo de conexión MySQL para reemplazar SQLite
+Soporta múltiples hosts MySQL (PlanetScale, Railway, Render, etc.)
+"""
+import os
+import threading
+import time
+from contextlib import contextmanager
+from functools import wraps
+import pymysql
+from pymysql.cursors import DictCursor
+
+# Configuración desde variables de entorno
+MYSQL_HOST = os.environ.get('MYSQL_HOST', 'localhost')
+MYSQL_PORT = int(os.environ.get('MYSQL_PORT', 3306))
+MYSQL_USER = os.environ.get('MYSQL_USER', 'root')
+MYSQL_PASSWORD = os.environ.get('MYSQL_PASSWORD', '')
+MYSQL_DATABASE = os.environ.get('MYSQL_DATABASE', 'scanner_db')
+MYSQL_SSL_CA = os.environ.get('MYSQL_SSL_CA')  # Para PlanetScale y otros hosts con SSL
+
+# Pool de conexiones thread-local
+_local = threading.local()
+
+def get_db_connection():
+    """Obtiene una conexión MySQL thread-local (reutilizable)"""
+    if not hasattr(_local, 'connection') or not _local.connection.open:
+        # Configurar SSL si es necesario (para PlanetScale, Railway, etc.)
+        ssl_config = None
+        if MYSQL_SSL_CA:
+            ssl_config = {'ca': MYSQL_SSL_CA}
+        elif MYSQL_HOST != 'localhost' and MYSQL_HOST != '127.0.0.1':
+            # Para hosts remotos, usar SSL por defecto
+            ssl_config = {}
+        
+        try:
+            _local.connection = pymysql.connect(
+                host=MYSQL_HOST,
+                port=MYSQL_PORT,
+                user=MYSQL_USER,
+                password=MYSQL_PASSWORD,
+                database=MYSQL_DATABASE,
+                charset='utf8mb4',
+                cursorclass=DictCursor,
+                autocommit=False,
+                ssl=ssl_config,
+                connect_timeout=10,
+                read_timeout=30,
+                write_timeout=30
+            )
+            print(f"✅ Conexión MySQL establecida: {MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}")
+        except Exception as e:
+            print(f"❌ Error conectando a MySQL: {e}")
+            raise
+    
+    return _local.connection
+
+@contextmanager
+def get_db_cursor():
+    """Context manager para operaciones de base de datos MySQL"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        yield cursor
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+
+def execute_query(query, params=None, fetch_one=False, fetch_all=False):
+    """Ejecuta una consulta SQL y retorna resultados"""
+    with get_db_cursor() as cursor:
+        cursor.execute(query, params or ())
+        if fetch_one:
+            return cursor.fetchone()
+        elif fetch_all:
+            return cursor.fetchall()
+        else:
+            return cursor.rowcount
+
+def init_mysql_db():
+    """Inicializa la base de datos MySQL creando todas las tablas necesarias"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Tabla de tokens de escaneo
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS scan_tokens (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                token VARCHAR(255) UNIQUE NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NULL,
+                used_count INT DEFAULT 0,
+                max_uses INT DEFAULT -1,
+                is_active BOOLEAN DEFAULT 1,
+                created_by VARCHAR(255),
+                description TEXT,
+                INDEX idx_token (token),
+                INDEX idx_active (is_active, expires_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ''')
+        
+        # Tabla de escaneos
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS scans (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                token_id INT,
+                scan_token VARCHAR(255),
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP NULL,
+                status VARCHAR(50) DEFAULT 'running',
+                total_files_scanned INT DEFAULT 0,
+                issues_found INT DEFAULT 0,
+                scan_duration DECIMAL(10, 2),
+                machine_id VARCHAR(255),
+                machine_name VARCHAR(255),
+                ip_address VARCHAR(45),
+                country VARCHAR(100),
+                minecraft_username VARCHAR(255),
+                FOREIGN KEY (token_id) REFERENCES scan_tokens(id) ON DELETE SET NULL,
+                INDEX idx_token_id (token_id),
+                INDEX idx_scan_token (scan_token),
+                INDEX idx_status (status),
+                INDEX idx_started_at (started_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ''')
+        
+        # Tabla de historial de bans
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ban_history (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                machine_id VARCHAR(255),
+                minecraft_username VARCHAR(255),
+                ip_address VARCHAR(45),
+                ban_reason TEXT,
+                hack_type VARCHAR(255),
+                banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                scan_id INT,
+                FOREIGN KEY (scan_id) REFERENCES scans(id) ON DELETE SET NULL,
+                INDEX idx_machine_id (machine_id),
+                INDEX idx_username (minecraft_username),
+                INDEX idx_banned_at (banned_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ''')
+        
+        # Tabla de resultados de escaneos
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS scan_results (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                scan_id INT,
+                issue_type VARCHAR(255),
+                issue_name VARCHAR(255),
+                issue_path TEXT,
+                issue_category VARCHAR(255),
+                alert_level VARCHAR(50),
+                confidence DECIMAL(5, 2),
+                detected_patterns TEXT,
+                obfuscation_detected BOOLEAN DEFAULT 0,
+                file_hash VARCHAR(64),
+                ai_analysis TEXT,
+                ai_confidence DECIMAL(5, 2),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (scan_id) REFERENCES scans(id) ON DELETE CASCADE,
+                INDEX idx_scan_id (scan_id),
+                INDEX idx_issue_type (issue_type),
+                INDEX idx_alert_level (alert_level)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ''')
+        
+        # Tabla de análisis de IA
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ai_analyses (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                scan_id INT,
+                result_id INT,
+                analysis_type VARCHAR(255),
+                ai_model VARCHAR(255),
+                analysis_result TEXT,
+                confidence DECIMAL(5, 2),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (scan_id) REFERENCES scans(id) ON DELETE CASCADE,
+                FOREIGN KEY (result_id) REFERENCES scan_results(id) ON DELETE CASCADE,
+                INDEX idx_scan_id (scan_id),
+                INDEX idx_result_id (result_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ''')
+        
+        # Tabla de empresas
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS companies (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(255) UNIQUE NOT NULL,
+                contact_email VARCHAR(255),
+                contact_phone VARCHAR(50),
+                subscription_type VARCHAR(50) DEFAULT 'enterprise',
+                subscription_status VARCHAR(50) DEFAULT 'active',
+                subscription_start_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                subscription_end_date TIMESTAMP NULL,
+                subscription_price DECIMAL(10, 2) DEFAULT 13.0,
+                max_users INT DEFAULT 8,
+                max_admins INT DEFAULT 3,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_by INT,
+                is_active BOOLEAN DEFAULT 1,
+                notes TEXT,
+                INDEX idx_name (name),
+                INDEX idx_active (is_active)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ''')
+        
+        # Tabla de usuarios
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                username VARCHAR(255) UNIQUE NOT NULL,
+                email VARCHAR(255) UNIQUE,
+                password_hash VARCHAR(255) NOT NULL,
+                roles TEXT DEFAULT '["user"]',
+                company_id INT,
+                is_active BOOLEAN DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_login TIMESTAMP NULL,
+                created_by VARCHAR(255),
+                FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL,
+                INDEX idx_username (username),
+                INDEX idx_email (email),
+                INDEX idx_company_id (company_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ''')
+        
+        # Tabla de enlaces de descarga
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS download_links (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                token VARCHAR(255) UNIQUE NOT NULL,
+                filename VARCHAR(255) NOT NULL,
+                created_by INT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NULL,
+                max_downloads INT DEFAULT 1,
+                download_count INT DEFAULT 0,
+                is_active BOOLEAN DEFAULT 1,
+                description TEXT,
+                FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE,
+                INDEX idx_token (token),
+                INDEX idx_active (is_active, expires_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ''')
+        
+        # Tabla de tokens de registro
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS registration_tokens (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                token VARCHAR(255) UNIQUE NOT NULL,
+                company_id INT,
+                created_by INT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NULL,
+                used_at TIMESTAMP NULL,
+                is_used BOOLEAN DEFAULT 0,
+                used_by INT,
+                max_uses INT DEFAULT 1,
+                description TEXT,
+                is_admin_token BOOLEAN DEFAULT 0,
+                FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL,
+                FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (used_by) REFERENCES users(id) ON DELETE SET NULL,
+                INDEX idx_token (token),
+                INDEX idx_company_id (company_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ''')
+        
+        # Tabla de versiones de aplicación
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS app_versions (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                version VARCHAR(50) UNIQUE NOT NULL,
+                release_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                download_url TEXT,
+                changelog TEXT,
+                is_active BOOLEAN DEFAULT 1,
+                file_size BIGINT,
+                file_hash VARCHAR(64),
+                min_required_version VARCHAR(50),
+                INDEX idx_version (version),
+                INDEX idx_active (is_active)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ''')
+        
+        # Tabla de configuraciones
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS configurations (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                `key` VARCHAR(255) UNIQUE NOT NULL,
+                value TEXT,
+                description TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_key (`key`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ''')
+        
+        # Tabla de estadísticas
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS statistics (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                date DATE DEFAULT (CURRENT_DATE),
+                total_scans INT DEFAULT 0,
+                total_issues_found INT DEFAULT 0,
+                unique_machines INT DEFAULT 0,
+                avg_scan_duration DECIMAL(10, 2),
+                INDEX idx_date (date)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ''')
+        
+        # Tabla de feedback del staff
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS staff_feedback (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                result_id INT NOT NULL,
+                scan_id INT,
+                staff_verification VARCHAR(50) NOT NULL,
+                staff_notes TEXT,
+                verified_by VARCHAR(255),
+                verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                file_hash VARCHAR(64),
+                issue_name VARCHAR(255),
+                issue_path TEXT,
+                extracted_patterns TEXT,
+                extracted_features TEXT,
+                FOREIGN KEY (result_id) REFERENCES scan_results(id) ON DELETE CASCADE,
+                FOREIGN KEY (scan_id) REFERENCES scans(id) ON DELETE SET NULL,
+                INDEX idx_result_id (result_id),
+                INDEX idx_scan_id (scan_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ''')
+        
+        # Tabla de patrones aprendidos
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS learned_patterns (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                pattern_type VARCHAR(255) NOT NULL,
+                pattern_value TEXT NOT NULL,
+                pattern_category VARCHAR(255),
+                confidence DECIMAL(5, 2) DEFAULT 1.0,
+                source_feedback_id INT,
+                learned_from_count INT DEFAULT 1,
+                first_learned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1,
+                FOREIGN KEY (source_feedback_id) REFERENCES staff_feedback(id) ON DELETE SET NULL,
+                INDEX idx_pattern_type (pattern_type),
+                INDEX idx_active (is_active)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ''')
+        
+        # Tabla de hashes aprendidos
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS learned_hashes (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                file_hash VARCHAR(64) UNIQUE NOT NULL,
+                is_hack BOOLEAN NOT NULL,
+                confirmed_count INT DEFAULT 1,
+                first_confirmed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_confirmed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                source_feedback_id INT,
+                FOREIGN KEY (source_feedback_id) REFERENCES staff_feedback(id) ON DELETE SET NULL,
+                INDEX idx_file_hash (file_hash)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ''')
+        
+        # Tabla de versiones de modelo de IA
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ai_model_versions (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                version VARCHAR(50) UNIQUE NOT NULL,
+                model_type VARCHAR(255),
+                training_data_count INT,
+                accuracy DECIMAL(5, 2),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1,
+                model_path TEXT,
+                INDEX idx_version (version),
+                INDEX idx_active (is_active)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ''')
+        
+        conn.commit()
+        print("✅ Base de datos MySQL inicializada correctamente")
+        
+        # Crear empresa default "arefy" si no existe
+        cursor.execute('SELECT COUNT(*) as count FROM companies WHERE name = %s', ('arefy',))
+        if cursor.fetchone()['count'] == 0:
+            cursor.execute('''
+                INSERT INTO companies (name, subscription_type, subscription_status, subscription_price, max_users, max_admins, notes)
+                VALUES (%s, 'enterprise', 'active', 13.0, 8, 3, 'Empresa default creada automáticamente')
+            ''', ('arefy',))
+            conn.commit()
+            print("✅ Empresa default 'arefy' creada")
+        
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ Error inicializando base de datos MySQL: {e}")
+        raise
+    finally:
+        cursor.close()
+
+# Cache en memoria (similar al sistema SQLite)
+_cache = {}
+_cache_timeout = {}
+CACHE_TTL = 30  # 30 segundos TTL
+
+def get_cached(key):
+    """Obtiene un valor del caché si no ha expirado"""
+    if key in _cache:
+        if time.time() - _cache_timeout.get(key, 0) < CACHE_TTL:
+            return _cache[key]
+        else:
+            del _cache[key]
+            del _cache_timeout[key]
+    return None
+
+def set_cached(key, value):
+    """Guarda un valor en el caché"""
+    _cache[key] = value
+    _cache_timeout[key] = time.time()
+
+def clear_cache(pattern=None):
+    """Limpia el caché (opcionalmente por patrón)"""
+    if pattern:
+        keys_to_delete = [k for k in _cache.keys() if pattern in k]
+        for k in keys_to_delete:
+            _cache.pop(k, None)
+            _cache_timeout.pop(k, None)
+    else:
+        _cache.clear()
+        _cache_timeout.clear()
+
