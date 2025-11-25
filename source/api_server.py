@@ -720,7 +720,15 @@ def create_scan_token():
                 ''', (token, expires_at, max_uses, description, created_by))
                 
                 token_id = cursor.lastrowid
-                print(f"✅ Token insertado con ID: {token_id}")
+                print(f"✅ Token insertado con ID: {token_id}, created_by='{created_by}'")
+                
+                # Verificar inmediatamente que se guardó correctamente
+                cursor.execute('SELECT token, created_by, created_at FROM scan_tokens WHERE id = ?', (token_id,))
+                verification = cursor.fetchone()
+                if verification:
+                    print(f"✅ Verificación: Token guardado correctamente - created_by='{verification[1]}', created_at={verification[2]}")
+                else:
+                    print(f"❌ ERROR: Token no encontrado después de insertar!")
                 
                 # Limpiar caché de tokens para asegurar que se vean los nuevos tokens
                 clear_cache('tokens')

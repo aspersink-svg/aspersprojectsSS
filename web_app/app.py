@@ -1100,7 +1100,7 @@ def list_tokens():
                     
                     tokens = []
                     for row in cursor.fetchall():
-                        tokens.append({
+                        token_data = {
                             'id': row[0],
                             'token': row[1],
                             'created_at': row[2],
@@ -1111,7 +1111,13 @@ def list_tokens():
                             'created_by': row[7],
                             'description': row[8],
                             'type': 'scan_token'  # Indicar que es un token de escaneo
-                        })
+                        }
+                        tokens.append(token_data)
+                        print(f"📋 Token encontrado: ID={token_data['id']}, created_by='{token_data['created_by']}', username='{username}'")
+                    
+                    print(f"📋 Total tokens encontrados en BD: {len(tokens)}")
+                    if not is_admin_user:
+                        print(f"🔍 Filtrando por usuario '{username}': {len(tokens)} tokens antes del filtro")
                     
                     return jsonify({'success': True, 'tokens': tokens})
             except Exception as e:
@@ -1145,6 +1151,9 @@ def list_tokens():
                 # Filtrar por usuario si no es admin
                 if not is_admin_user:
                     tokens_before_filter = len(tokens)
+                    print(f"🔍 Tokens antes del filtro: {tokens_before_filter}")
+                    for t in tokens:
+                        print(f"  - Token ID={t.get('id')}, created_by='{t.get('created_by')}', username='{username}', match={t.get('created_by') == username}")
                     tokens = [t for t in tokens if t.get('created_by') == username]
                     print(f"🔍 Filtrando tokens por usuario '{username}': {tokens_before_filter} -> {len(tokens)} tokens")
                 
@@ -2481,17 +2490,31 @@ def download_with_token(token):
         
         link_id, filename, expires_at, max_downloads, download_count, is_active = link
         
+        # Asegurar que max_downloads sea un entero (puede venir como string desde SQLite)
+        try:
+            max_downloads = int(max_downloads) if max_downloads is not None else -1
+            download_count = int(download_count) if download_count is not None else 0
+        except (ValueError, TypeError):
+            max_downloads = -1
+            download_count = 0
+        
+        print(f"🔍 Verificando enlace de descarga: ID={link_id}, max_downloads={max_downloads}, download_count={download_count}, is_active={is_active}")
+        
         # Verificar expiración
         if expires_at:
             expires_dt = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
             if datetime.now() > expires_dt:
                 conn.close()
+                print(f"❌ Enlace expirado: {expires_at}")
                 return jsonify({'error': 'Este enlace de descarga ha expirado'}), 410
         
         # Verificar límite de descargas (solo si max_downloads no es -1, que significa ilimitado)
         if max_downloads != -1 and download_count >= max_downloads:
             conn.close()
+            print(f"❌ Límite alcanzado: download_count={download_count} >= max_downloads={max_downloads}")
             return jsonify({'error': 'Este enlace ha alcanzado el límite de descargas'}), 403
+        
+        print(f"✅ Enlace válido, procediendo con descarga")
         
         # Incrementar contador de descargas
         cursor.execute('''
