@@ -1102,8 +1102,8 @@ def list_tokens():
                             'description': row[8],
                             'type': 'scan_token'  # Indicar que es un token de escaneo
                         })
-                
-    return jsonify({'success': True, 'tokens': tokens})
+                    
+                    return jsonify({'success': True, 'tokens': tokens})
             except Exception as e:
                 print(f"Error accediendo BD local, usando HTTP: {str(e)}")
                 # Continuar con HTTP si falla acceso local
