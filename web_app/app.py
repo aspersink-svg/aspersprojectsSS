@@ -1244,7 +1244,7 @@ def create_token():
                 if response.status_code == 201:
                     data = response.json()
                     print(f"✅ Token creado exitosamente: {data.get('token', '')[:20]}...")
-            return jsonify({
+                    return jsonify({
                 'success': True,
                         'token': data.get('token'),
                         'token_id': data.get('token_id'),
