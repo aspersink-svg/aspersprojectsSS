@@ -1,14 +1,39 @@
 """
-Módulo de conexión MySQL para reemplazar SQLite
-Soporta múltiples hosts MySQL (PlanetScale, Railway, Render, etc.)
+Módulo de conexión MySQL/PostgreSQL para reemplazar SQLite
+Soporta múltiples hosts MySQL (PlanetScale, Railway, etc.) y PostgreSQL (Render, Supabase, Neon)
+Detecta automáticamente qué base de datos usar según las variables de entorno
 """
 import os
+import sys
 import threading
 import time
 from contextlib import contextmanager
 from functools import wraps
-import pymysql
-from pymysql.cursors import DictCursor
+
+# Detectar qué tipo de BD usar
+USE_POSTGRESQL = bool(os.environ.get('DATABASE_URL') or os.environ.get('POSTGRES_HOST'))
+USE_MYSQL = bool(os.environ.get('MYSQL_HOST') and not USE_POSTGRESQL)
+
+if USE_POSTGRESQL:
+    # Usar PostgreSQL
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        print("✅ Usando PostgreSQL")
+    except ImportError:
+        print("⚠️ psycopg2 no instalado, intentando MySQL...")
+        USE_POSTGRESQL = False
+        USE_MYSQL = True
+
+if USE_MYSQL and not USE_POSTGRESQL:
+    # Usar MySQL
+    try:
+        import pymysql
+        from pymysql.cursors import DictCursor
+        print("✅ Usando MySQL")
+    except ImportError:
+        print("⚠️ pymysql no instalado")
+        USE_MYSQL = False
 
 # Configuración desde variables de entorno
 MYSQL_HOST = os.environ.get('MYSQL_HOST', 'localhost')
@@ -22,7 +47,52 @@ MYSQL_SSL_CA = os.environ.get('MYSQL_SSL_CA')  # Para PlanetScale y otros hosts 
 _local = threading.local()
 
 def get_db_connection():
-    """Obtiene una conexión MySQL thread-local (reutilizable)"""
+    """Obtiene una conexión MySQL/PostgreSQL thread-local (reutilizable)"""
+    if USE_POSTGRESQL:
+        # Usar PostgreSQL
+        return _get_postgresql_connection()
+    elif USE_MYSQL:
+        # Usar MySQL
+        return _get_mysql_connection()
+    else:
+        raise Exception("No hay base de datos configurada. Configura DATABASE_URL o MYSQL_HOST")
+
+def _get_postgresql_connection():
+    """Obtiene conexión PostgreSQL"""
+    if not hasattr(_local, 'connection') or _local.connection.closed:
+        try:
+            if os.environ.get('DATABASE_URL'):
+                # Usar connection string de Render
+                _local.connection = psycopg2.connect(
+                    os.environ.get('DATABASE_URL'),
+                    cursor_factory=RealDictCursor,
+                    connect_timeout=10
+                )
+            else:
+                # Usar variables individuales
+                POSTGRES_HOST = os.environ.get('POSTGRES_HOST')
+                POSTGRES_PORT = int(os.environ.get('POSTGRES_PORT', 5432))
+                POSTGRES_USER = os.environ.get('POSTGRES_USER')
+                POSTGRES_PASSWORD = os.environ.get('POSTGRES_PASSWORD')
+                POSTGRES_DATABASE = os.environ.get('POSTGRES_DATABASE')
+                
+                _local.connection = psycopg2.connect(
+                    host=POSTGRES_HOST,
+                    port=POSTGRES_PORT,
+                    user=POSTGRES_USER,
+                    password=POSTGRES_PASSWORD,
+                    database=POSTGRES_DATABASE,
+                    cursor_factory=RealDictCursor,
+                    connect_timeout=10
+                )
+            print(f"✅ Conexión PostgreSQL establecida")
+        except Exception as e:
+            print(f"❌ Error conectando a PostgreSQL: {e}")
+            raise
+    return _local.connection
+
+def _get_mysql_connection():
+    """Obtiene conexión MySQL"""
     if not hasattr(_local, 'connection') or not _local.connection.open:
         # Configurar SSL si es necesario (para PlanetScale, Railway, etc.)
         ssl_config = None
@@ -56,7 +126,7 @@ def get_db_connection():
 
 @contextmanager
 def get_db_cursor():
-    """Context manager para operaciones de base de datos MySQL"""
+    """Context manager para operaciones de base de datos MySQL/PostgreSQL"""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -80,7 +150,18 @@ def execute_query(query, params=None, fetch_one=False, fetch_all=False):
             return cursor.rowcount
 
 def init_mysql_db():
-    """Inicializa la base de datos MySQL creando todas las tablas necesarias"""
+    """Inicializa la base de datos MySQL/PostgreSQL creando todas las tablas necesarias"""
+    if USE_POSTGRESQL:
+        # Usar módulo PostgreSQL
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from db_postgresql import init_postgresql_db
+            return init_postgresql_db()
+        except ImportError:
+            print("⚠️ db_postgresql no disponible, usando MySQL...")
+            pass
+    
+    # Usar MySQL
     conn = get_db_connection()
     cursor = conn.cursor()
     

@@ -1,16 +1,33 @@
 """
 Sistema de Autenticación para la Aplicación Web
 Maneja usuarios, sesiones y tokens de registro
+Migrado a MySQL para persistencia en Render
 """
-import sqlite3
 import hashlib
 import secrets
 import datetime
+import json
 from functools import wraps
 from flask import session, redirect, url_for, request, jsonify
 
 import os
-DATABASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'scanner_db.sqlite')
+import sys
+
+# Intentar usar MySQL primero, fallback a SQLite
+USE_MYSQL = False
+try:
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from db_mysql import (
+        get_db_connection,
+        get_db_cursor,
+        init_mysql_db
+    )
+    USE_MYSQL = True
+    print("✅ Usando MySQL para autenticación")
+except ImportError as e:
+    print(f"⚠️ MySQL no disponible, usando SQLite como fallback: {e}")
+    import sqlite3
+    DATABASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'scanner_db.sqlite')
 
 def init_auth_db():
     """Inicializa las tablas de autenticación en la base de datos"""
