@@ -1469,11 +1469,12 @@ def create_token():
                         else:
                             download_link = f"{base_url}/d/{download_token}"
                         print(f"🔗 Enlace de descarga creado: {download_link}")
-    except Exception as e:
-        import traceback
+                    except Exception as e:
+                        import traceback
                         print(f"⚠️ Error creando enlace de descarga automático: {e}")
                         print(traceback.format_exc())
                         # No fallar si no se puede crear el enlace, solo continuar
+                        download_link = None
                     
                     return jsonify({
                         'success': True,
