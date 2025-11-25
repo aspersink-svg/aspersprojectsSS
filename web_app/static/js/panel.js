@@ -117,6 +117,7 @@ function showSection(sectionName) {
     // Cargar datos específicos de cada sección
     if (sectionName === 'administracion') {
         loadRegistrationTokens();
+        loadDownloadLinks(); // Cargar enlaces de descarga
         loadUsers();
         loadCompanyUsersForAdmin(); // Cargar usuarios de empresa para admin de empresa
     } else if (sectionName === 'mi-empresa') {
@@ -1515,6 +1516,80 @@ function setupAdminListeners() {
             document.body.removeChild(textArea);
         }
     });
+    
+    // Formulario de enlace de descarga
+    document.getElementById('download-link-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const filename = document.getElementById('download-link-filename').value;
+        const expiresHours = parseInt(document.getElementById('download-link-expires').value) || 24;
+        const maxDownloads = parseInt(document.getElementById('download-link-max').value) || 1;
+        const description = document.getElementById('download-link-description').value;
+        
+        try {
+            const response = await fetch('/api/download-links', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    filename: filename,
+                    expires_hours: expiresHours,
+                    max_downloads: maxDownloads,
+                    description: description
+                })
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                if (data.success) {
+                    // Mostrar enlace generado
+                    document.getElementById('generated-download-link').value = data.download_url;
+                    document.getElementById('download-link-result').style.display = 'block';
+                    
+                    // Resetear formulario
+                    document.getElementById('download-link-form').reset();
+                    document.getElementById('download-link-expires').value = 24;
+                    document.getElementById('download-link-max').value = 1;
+                    
+                    // Recargar lista de enlaces
+                    loadDownloadLinks();
+                } else {
+                    alert('Error: ' + (data.error || 'Error desconocido'));
+                }
+            } else {
+                const error = await response.json();
+                alert('Error: ' + (error.error || 'Error al generar enlace'));
+            }
+        } catch (error) {
+            alert('Error de conexión: ' + error.message);
+        }
+    });
+    
+    // Botón copiar enlace de descarga
+    document.getElementById('copy-download-link-btn')?.addEventListener('click', async () => {
+        const linkInput = document.getElementById('generated-download-link');
+        const link = linkInput?.value;
+        
+        if (!link) {
+            alert('No hay enlace para copiar');
+            return;
+        }
+        
+        try {
+            await navigator.clipboard.writeText(link);
+            const btn = document.getElementById('copy-download-link-btn');
+            const originalText = btn.textContent;
+            btn.textContent = '✓ Copiado!';
+            btn.style.background = '#22c55e';
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.style.background = '';
+            }, 2000);
+        } catch (error) {
+            alert('Error al copiar: ' + error.message);
+        }
+    });
 }
 
 async function loadRegistrationTokens() {
@@ -1553,6 +1628,108 @@ async function loadRegistrationTokens() {
             tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">Error al cargar tokens</td></tr>';
         }
     }
+}
+
+async function loadDownloadLinks() {
+    try {
+        const response = await fetch('/api/download-links');
+        const data = await response.json();
+        
+        const container = document.getElementById('download-links-list');
+        if (data.success && data.links && data.links.length > 0) {
+            container.innerHTML = `
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Enlace</th>
+                                <th>Archivo</th>
+                                <th>Creado por</th>
+                                <th>Descargas</th>
+                                <th>Expira</th>
+                                <th>Estado</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.links.map(link => {
+                                const expiresAt = link.expires_at ? new Date(link.expires_at).toLocaleString('es-ES') : 'Sin expiración';
+                                const isExpired = link.expires_at ? new Date(link.expires_at) < new Date() : false;
+                                const isLimitReached = link.download_count >= link.max_downloads;
+                                const status = !link.is_active ? 'Desactivado' : (isExpired ? 'Expirado' : (isLimitReached ? 'Límite alcanzado' : 'Activo'));
+                                const statusBadge = !link.is_active ? 'danger' : (isExpired ? 'warning' : (isLimitReached ? 'warning' : 'success'));
+                                
+                                return `
+                                <tr>
+                                    <td>
+                                        <code style="font-size: 11px; word-break: break-all;">${link.download_url}</code>
+                                        <button class="btn btn-sm btn-secondary" onclick="copyToClipboard('${link.download_url}')" style="margin-top: 4px;">
+                                            📋 Copiar
+                                        </button>
+                                    </td>
+                                    <td>${link.filename}</td>
+                                    <td>${link.created_by || 'N/A'}</td>
+                                    <td>${link.download_count} / ${link.max_downloads}</td>
+                                    <td>${expiresAt}</td>
+                                    <td>
+                                        <span class="badge badge-${statusBadge}">${status}</span>
+                                    </td>
+                                    <td>
+                                        ${link.is_active ? `
+                                            <button class="btn btn-sm btn-danger" onclick="deleteDownloadLink(${link.id})">
+                                                Desactivar
+                                            </button>
+                                        ` : '<span class="text-muted">-</span>'}
+                                    </td>
+                                </tr>
+                            `;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        } else {
+            container.innerHTML = '<p class="loading-text">No hay enlaces de descarga activos</p>';
+        }
+    } catch (error) {
+        console.error('Error cargando enlaces de descarga:', error);
+        const container = document.getElementById('download-links-list');
+        if (container) {
+            container.innerHTML = '<p class="error-text">Error al cargar enlaces</p>';
+        }
+    }
+}
+
+async function deleteDownloadLink(linkId) {
+    if (!confirm('¿Estás seguro de que quieres desactivar este enlace de descarga?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/download-links/${linkId}`, {
+            method: 'DELETE'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            alert('Enlace desactivado exitosamente');
+            loadDownloadLinks();
+        } else {
+            alert('Error: ' + (data.error || 'Error desconocido'));
+        }
+    } catch (error) {
+        console.error('Error desactivando enlace:', error);
+        alert('Error al desactivar enlace');
+    }
+}
+
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => {
+        alert('✓ Enlace copiado al portapapeles');
+    }).catch(err => {
+        alert('Error al copiar: ' + err.message);
+    });
 }
 
 async function loadUsers() {
