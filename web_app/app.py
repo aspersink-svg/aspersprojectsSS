@@ -1199,6 +1199,40 @@ def create_token():
                     token_id = cursor.lastrowid
                 
                 print(f"✅ Token creado localmente: ID={token_id}")
+                
+                # Crear automáticamente un enlace de descarga pública asociado
+                download_link = None
+                try:
+                    import sqlite3
+                    from datetime import datetime, timedelta
+                    from auth import DATABASE
+                    
+                    download_token = secrets.token_urlsafe(32)
+                    # El enlace expira cuando el token expira, o en 7 días si el token no expira
+                    download_expires_hours = expires_days * 24 if expires_days > 0 else 168  # 7 días por defecto
+                    download_expires_at = datetime.now() + timedelta(hours=download_expires_hours)
+                    
+                    conn = sqlite3.connect(DATABASE)
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        INSERT INTO download_links (token, filename, created_by, expires_at, max_downloads, description)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (download_token, 'MinecraftSSTool.exe', user.get('id'), download_expires_at.isoformat(), -1, f'Enlace asociado al token de escaneo: {description or "Sin descripción"}'))
+                    conn.commit()
+                    conn.close()
+                    
+                    # Generar URL completa
+                    base_url = request.host_url.rstrip('/')
+                    if IS_RENDER:
+                        render_url = os.environ.get('RENDER_EXTERNAL_URL', '')
+                        if render_url:
+                            base_url = render_url.rstrip('/')
+                    download_link = f"{base_url}/d/{download_token}"
+                    print(f"🔗 Enlace de descarga creado: {download_link}")
+                except Exception as e:
+                    print(f"⚠️ Error creando enlace de descarga automático: {e}")
+                    # No fallar si no se puede crear el enlace, solo continuar
+                
                 return jsonify({
                     'success': True,
                     'token': token,
@@ -1207,7 +1241,8 @@ def create_token():
                     'max_uses': max_uses,
                     'description': description,
                     'created_by': created_by,
-                    'type': 'scan_token'  # Indicar que es un token de escaneo (NO de registro)
+                    'type': 'scan_token',  # Indicar que es un token de escaneo (NO de registro)
+                    'download_url': download_link  # URL pública para descargar el ejecutable
                 }), 201
             except Exception as e:
                 print(f"⚠️ Error accediendo BD local, usando HTTP: {str(e)}")
@@ -1244,6 +1279,44 @@ def create_token():
                 if response.status_code == 201:
                     data = response.json()
                     print(f"✅ Token creado exitosamente: {data.get('token', '')[:20]}...")
+                    
+                    # Crear automáticamente un enlace de descarga pública asociado
+                    download_link = None
+                    try:
+                        import sqlite3
+                        from datetime import datetime, timedelta
+                        from auth import DATABASE
+                        
+                        download_token = secrets.token_urlsafe(32)
+                        # El enlace expira cuando el token expira, o en 7 días si el token no expira
+                        expires_days_from_token = expires_days if expires_days > 0 else 7
+                        download_expires_hours = expires_days_from_token * 24
+                        download_expires_at = datetime.now() + timedelta(hours=download_expires_hours)
+                        
+                        user_id = session.get('user_id')
+                        conn = sqlite3.connect(DATABASE)
+                        cursor = conn.cursor()
+                        cursor.execute('''
+                            INSERT INTO download_links (token, filename, created_by, expires_at, max_downloads, description)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        ''', (download_token, 'MinecraftSSTool.exe', user_id, download_expires_at.isoformat(), -1, f'Enlace asociado al token de escaneo: {description or "Sin descripción"}'))
+                        conn.commit()
+                        conn.close()
+                        
+                        # Generar URL completa
+                        base_url = request.host_url.rstrip('/')
+                        if IS_RENDER:
+                            render_url = os.environ.get('RENDER_EXTERNAL_URL', '')
+                            if render_url:
+                                base_url = render_url.rstrip('/')
+                        download_link = f"{base_url}/d/{download_token}"
+                        print(f"🔗 Enlace de descarga creado: {download_link}")
+                    except Exception as e:
+                        import traceback
+                        print(f"⚠️ Error creando enlace de descarga automático: {e}")
+                        print(traceback.format_exc())
+                        # No fallar si no se puede crear el enlace, solo continuar
+                    
                     return jsonify({
                         'success': True,
                         'token': data.get('token'),
@@ -1252,7 +1325,8 @@ def create_token():
                         'max_uses': max_uses,
                         'description': description,
                         'created_by': created_by,
-                        'type': 'scan_token'
+                        'type': 'scan_token',
+                        'download_url': download_link  # URL pública para descargar el ejecutable
                     }), 201
                 else:
                     error_text = response.text[:500] if response.text else 'Sin respuesta'

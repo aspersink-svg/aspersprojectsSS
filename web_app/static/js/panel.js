@@ -421,9 +421,22 @@ async function createToken() {
         }
 
         const data = await response.json();
-        // El endpoint devuelve {success: true, token: ...}
+        // El endpoint devuelve {success: true, token: ..., download_url: ...}
         if (data.success && data.token) {
             document.getElementById('generated-token').textContent = data.token;
+            
+            // Mostrar enlace de descarga si está disponible
+            const downloadLinkSection = document.getElementById('download-link-section');
+            const downloadLinkInput = document.getElementById('generated-download-link-from-token');
+            if (data.download_url && downloadLinkSection && downloadLinkInput) {
+                downloadLinkInput.value = data.download_url;
+                downloadLinkSection.style.display = 'block';
+            } else {
+                if (downloadLinkSection) {
+                    downloadLinkSection.style.display = 'none';
+                }
+            }
+            
             document.getElementById('token-modal').classList.remove('active');
             // Limpiar formulario
             document.getElementById('token-form').reset();

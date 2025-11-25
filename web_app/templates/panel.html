@@ -946,7 +946,15 @@
                 <p>Token generado exitosamente. Copia este token y guárdalo en un lugar seguro:</p>
                 <div class="token-display">
                     <code id="generated-token"></code>
-                    <button class="btn btn-secondary" id="copy-token-btn">Copiar</button>
+                    <button class="btn btn-secondary" id="copy-token-btn">Copiar Token</button>
+                </div>
+                <div id="download-link-section" style="margin-top: 20px; display: none;">
+                    <p style="margin-bottom: 10px;"><strong>🔗 Enlace de descarga pública:</strong></p>
+                    <div class="token-display">
+                        <input type="text" id="generated-download-link-from-token" readonly style="width: 100%; padding: 8px; font-family: monospace; border: 1px solid #30363d; background: #0d1117; color: #c9d1d9; border-radius: 4px;">
+                        <button class="btn btn-secondary" id="copy-download-link-from-token-btn" style="margin-top: 10px;">📋 Copiar Enlace</button>
+                    </div>
+                    <p class="warning-text" style="margin-top: 10px;">✅ Este enlace permite descargar el ejecutable sin iniciar sesión. Compártelo junto con el token.</p>
                 </div>
                 <p class="warning-text">⚠️ Este token solo se mostrará una vez</p>
             </div>
