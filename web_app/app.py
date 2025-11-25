@@ -2297,7 +2297,7 @@ def download_file(filename):
         return download_with_token(token)
     
     # Si no hay token, requerir autenticación (comportamiento anterior)
-    from web_app.auth import login_required
+    from auth import login_required
     return login_required(lambda: _send_file_download(filename))()
 
 def _send_file_download(filename):
@@ -2822,7 +2822,7 @@ def create_download_link():
     import secrets
     import sqlite3
     from datetime import datetime, timedelta
-    from web_app.auth import is_admin, get_user_id
+    from auth import is_admin, get_user_id
     
     # Verificar permisos (solo staff/admin)
     if not is_admin(session.get('user_id')):
@@ -2882,7 +2882,7 @@ def create_download_link():
 def list_download_links():
     """Lista todos los enlaces de descarga (solo para staff/admin)"""
     import sqlite3
-    from web_app.auth import is_admin
+    from auth import is_admin
     
     # Verificar permisos
     if not is_admin(session.get('user_id')):
@@ -2942,7 +2942,7 @@ def list_download_links():
 def delete_download_link(link_id):
     """Desactiva un enlace de descarga (solo para staff/admin)"""
     import sqlite3
-    from web_app.auth import is_admin
+    from auth import is_admin
     
     # Verificar permisos
     if not is_admin(session.get('user_id')):
