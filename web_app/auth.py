@@ -13,8 +13,14 @@ from flask import session, redirect, url_for, request, jsonify
 import os
 import sys
 
-# Intentar usar MySQL primero, fallback a SQLite
+# Intentar usar MySQL/PostgreSQL primero, fallback a SQLite
 USE_MYSQL = False
+USE_POSTGRESQL = False
+
+# Siempre importar sqlite3 como fallback
+import sqlite3
+DATABASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'scanner_db.sqlite')
+
 try:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from db_mysql import (
@@ -22,15 +28,32 @@ try:
         get_db_cursor,
         init_mysql_db
     )
-    USE_MYSQL = True
-    print("✅ Usando MySQL para autenticación")
+    # Verificar si está usando PostgreSQL o MySQL
+    USE_POSTGRESQL = bool(os.environ.get('DATABASE_URL') or os.environ.get('POSTGRES_HOST'))
+    USE_MYSQL = bool(os.environ.get('MYSQL_HOST') and not USE_POSTGRESQL)
+    
+    if USE_POSTGRESQL:
+        print("✅ Usando PostgreSQL para autenticación")
+    elif USE_MYSQL:
+        print("✅ Usando MySQL para autenticación")
+    else:
+        print("⚠️ No hay BD configurada, usando SQLite como fallback")
 except ImportError as e:
-    print(f"⚠️ MySQL no disponible, usando SQLite como fallback: {e}")
-    import sqlite3
-    DATABASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'scanner_db.sqlite')
+    print(f"⚠️ MySQL/PostgreSQL no disponible, usando SQLite como fallback: {e}")
 
 def init_auth_db():
     """Inicializa las tablas de autenticación en la base de datos"""
+    # Si está usando MySQL/PostgreSQL, usar ese módulo
+    if USE_MYSQL or USE_POSTGRESQL:
+        try:
+            init_mysql_db()
+            print("✅ Base de datos MySQL/PostgreSQL inicializada para autenticación")
+            return
+        except Exception as e:
+            print(f"⚠️ Error inicializando MySQL/PostgreSQL: {e}")
+            print("⚠️ Intentando fallback a SQLite...")
+    
+    # Fallback a SQLite
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
     
