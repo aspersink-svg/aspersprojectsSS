@@ -1324,8 +1324,8 @@ def list_scans():
     """Lista escaneos - Usa BD directa si está disponible, sino HTTP"""
     import time
     
-        limit = request.args.get('limit', 50, type=int)
-        offset = request.args.get('offset', 0, type=int)
+    limit = request.args.get('limit', 50, type=int)
+    offset = request.args.get('offset', 0, type=int)
     
     # Caché por limit/offset (10 segundos TTL)
     cache_key = f'scans_list_{limit}_{offset}'
