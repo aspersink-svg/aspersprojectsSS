@@ -23,23 +23,35 @@ DATABASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'scanner_db.
 
 try:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from db_mysql import (
-        get_db_connection,
-        get_db_cursor,
-        init_mysql_db
-    )
-    # Verificar si está usando PostgreSQL o MySQL
+    # Verificar si está usando PostgreSQL o MySQL ANTES de importar
     USE_POSTGRESQL = bool(os.environ.get('DATABASE_URL') or os.environ.get('POSTGRES_HOST'))
     USE_MYSQL = bool(os.environ.get('MYSQL_HOST') and not USE_POSTGRESQL)
     
-    if USE_POSTGRESQL:
-        print("✅ Usando PostgreSQL para autenticación")
-    elif USE_MYSQL:
-        print("✅ Usando MySQL para autenticación")
+    if USE_POSTGRESQL or USE_MYSQL:
+        try:
+            from db_mysql import (
+                get_db_connection,
+                get_db_cursor,
+                init_mysql_db
+            )
+            if USE_POSTGRESQL:
+                print("✅ Usando PostgreSQL para autenticación")
+            elif USE_MYSQL:
+                print("✅ Usando MySQL para autenticación")
+        except ImportError as e:
+            print(f"⚠️ Error importando db_mysql: {e}")
+            print("⚠️ Usando SQLite como fallback")
+            USE_POSTGRESQL = False
+            USE_MYSQL = False
     else:
         print("⚠️ No hay BD configurada, usando SQLite como fallback")
-except ImportError as e:
-    print(f"⚠️ MySQL/PostgreSQL no disponible, usando SQLite como fallback: {e}")
+        USE_POSTGRESQL = False
+        USE_MYSQL = False
+except Exception as e:
+    print(f"⚠️ Error configurando BD: {e}")
+    print("⚠️ Usando SQLite como fallback")
+    USE_POSTGRESQL = False
+    USE_MYSQL = False
 
 def init_auth_db():
     """Inicializa las tablas de autenticación en la base de datos"""
