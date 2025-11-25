@@ -1112,7 +1112,7 @@ def list_tokens():
                             'type': 'scan_token'  # Indicar que es un token de escaneo
                         })
                     
-                    return jsonify({'success': True, 'tokens': tokens})
+    return jsonify({'success': True, 'tokens': tokens})
             except Exception as e:
                 print(f"Error accediendo BD local, usando HTTP: {str(e)}")
                 # Continuar con HTTP si falla acceso local
@@ -1244,7 +1244,7 @@ def create_token():
                 if response.status_code == 201:
                     data = response.json()
                     print(f"✅ Token creado exitosamente: {data.get('token', '')[:20]}...")
-                    return jsonify({
+            return jsonify({
                 'success': True,
                         'token': data.get('token'),
                         'token_id': data.get('token_id'),
@@ -1254,7 +1254,7 @@ def create_token():
                         'created_by': created_by,
                         'type': 'scan_token'
             }), 201
-                else:
+        else:
                     error_text = response.text[:500] if response.text else 'Sin respuesta'
                     print(f"❌ Error de API: {response.status_code} - {error_text}")
                     try:
@@ -1301,7 +1301,7 @@ def delete_token(token_id):
             cursor.execute('SELECT id, created_by FROM scan_tokens WHERE id = ?', (token_id,))
             token_row = cursor.fetchone()
             if not token_row:
-                return jsonify({'success': False, 'error': 'Token no encontrado'}), 404
+            return jsonify({'success': False, 'error': 'Token no encontrado'}), 404
         
             token_creator = token_row[1]
             
@@ -1324,8 +1324,8 @@ def list_scans():
     """Lista escaneos - Usa BD directa si está disponible, sino HTTP"""
     import time
     
-    limit = request.args.get('limit', 50, type=int)
-    offset = request.args.get('offset', 0, type=int)
+        limit = request.args.get('limit', 50, type=int)
+        offset = request.args.get('offset', 0, type=int)
     
     # Caché por limit/offset (10 segundos TTL)
     cache_key = f'scans_list_{limit}_{offset}'
@@ -1457,7 +1457,7 @@ def list_scans():
                 print(f"📋 Primeros escaneos recibidos:")
                 for i, scan in enumerate(result.get('scans', [])[:3]):
                     print(f"   [{i+1}] Scan ID: {scan.get('id')}, Machine: {scan.get('machine_name')}, Issues: {scan.get('issues_found')}, Status: {scan.get('status')}")
-            else:
+        else:
                 print(f"⚠️ La API devolvió 200 pero sin escaneos en la respuesta")
                 print(f"📋 Respuesta completa: {result}")
             
