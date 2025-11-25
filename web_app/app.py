@@ -1382,9 +1382,10 @@ def create_token():
                 except Exception as e:
                     print(f"⚠️ Error creando enlace de descarga automático: {e}")
                     # No fallar si no se puede crear el enlace, solo continuar
+                    download_link = None
                 
-            return jsonify({
-                'success': True,
+                return jsonify({
+                    'success': True,
                     'token': token,
                     'token_id': token_id,
                     'expires_at': expires_at,
@@ -1393,9 +1394,11 @@ def create_token():
                     'created_by': created_by,
                     'type': 'scan_token',  # Indicar que es un token de escaneo (NO de registro)
                     'download_url': download_link  # URL pública para descargar el ejecutable
-            }), 201
+                }), 201
             except Exception as e:
                 print(f"⚠️ Error accediendo BD local, usando HTTP: {str(e)}")
+                import traceback
+                print(traceback.format_exc())
                 use_http = True  # Forzar HTTP si falla
         
         # Usar HTTP (Render o si falló BD local)
@@ -1407,7 +1410,7 @@ def create_token():
             if API_KEY:
                 headers['X-API-Key'] = API_KEY
                 print(f"🔑 Enviando API Key: {API_KEY[:10]}...")
-        else:
+            else:
                 print("⚠️ No hay API_KEY configurada, la API puede rechazar la petición")
             
             # Crear token a través de la API HTTP
