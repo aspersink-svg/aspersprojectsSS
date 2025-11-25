@@ -1112,7 +1112,7 @@ def list_tokens():
                             'type': 'scan_token'  # Indicar que es un token de escaneo
                         })
                     
-                    return jsonify({'success': True, 'tokens': tokens})
+    return jsonify({'success': True, 'tokens': tokens})
             except Exception as e:
                 print(f"Error accediendo BD local, usando HTTP: {str(e)}")
                 # Continuar con HTTP si falla acceso local
@@ -1244,7 +1244,7 @@ def create_token():
                 if response.status_code == 201:
                     data = response.json()
                     print(f"✅ Token creado exitosamente: {data.get('token', '')[:20]}...")
-                    return jsonify({
+            return jsonify({
                 'success': True,
                         'token': data.get('token'),
                         'token_id': data.get('token_id'),
@@ -1254,7 +1254,7 @@ def create_token():
                         'created_by': created_by,
                         'type': 'scan_token'
             }), 201
-                else:
+        else:
                     error_text = response.text[:500] if response.text else 'Sin respuesta'
                     print(f"❌ Error de API: {response.status_code} - {error_text}")
                     try:
