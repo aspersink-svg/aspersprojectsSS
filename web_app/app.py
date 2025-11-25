@@ -1244,8 +1244,8 @@ def create_token():
                 if response.status_code == 201:
                     data = response.json()
                     print(f"✅ Token creado exitosamente: {data.get('token', '')[:20]}...")
-            return jsonify({
-                'success': True,
+                    return jsonify({
+                        'success': True,
                         'token': data.get('token'),
                         'token_id': data.get('token_id'),
                         'expires_at': data.get('expires_at'),
@@ -1253,8 +1253,8 @@ def create_token():
                         'description': description,
                         'created_by': created_by,
                         'type': 'scan_token'
-            }), 201
-        else:
+                    }), 201
+                else:
                     error_text = response.text[:500] if response.text else 'Sin respuesta'
                     print(f"❌ Error de API: {response.status_code} - {error_text}")
                     try:
