@@ -2398,9 +2398,9 @@ def download_with_token(token):
                 break
         
         if file_path:
-        return send_file(file_path, as_attachment=True, download_name=filename)
-    else:
-        return jsonify({'error': f'Archivo no encontrado: {filename}'}), 404
+            return send_file(file_path, as_attachment=True, download_name=filename)
+        else:
+            return jsonify({'error': f'Archivo no encontrado: {filename}'}), 404
             
     except Exception as e:
         import traceback
