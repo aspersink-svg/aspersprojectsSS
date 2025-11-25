@@ -1103,7 +1103,7 @@ def list_tokens():
                             'type': 'scan_token'  # Indicar que es un token de escaneo
                         })
                     
-                    return jsonify({'success': True, 'tokens': tokens})
+    return jsonify({'success': True, 'tokens': tokens})
             except Exception as e:
                 print(f"Error accediendo BD local, usando HTTP: {str(e)}")
                 # Continuar con HTTP si falla acceso local
@@ -1235,8 +1235,8 @@ def create_token():
                 if response.status_code == 201:
                     data = response.json()
                     print(f"✅ Token creado exitosamente: {data.get('token', '')[:20]}...")
-                    return jsonify({
-                        'success': True,
+            return jsonify({
+                'success': True,
                         'token': data.get('token'),
                         'token_id': data.get('token_id'),
                         'expires_at': data.get('expires_at'),
@@ -1244,8 +1244,8 @@ def create_token():
                         'description': description,
                         'created_by': created_by,
                         'type': 'scan_token'
-                    }), 201
-                else:
+            }), 201
+        else:
                     error_text = response.text[:500] if response.text else 'Sin respuesta'
                     print(f"❌ Error de API: {response.status_code} - {error_text}")
                     try:
@@ -1292,8 +1292,8 @@ def delete_token(token_id):
             cursor.execute('SELECT id, created_by FROM scan_tokens WHERE id = ?', (token_id,))
             token_row = cursor.fetchone()
             if not token_row:
-                return jsonify({'success': False, 'error': 'Token no encontrado'}), 404
-            
+            return jsonify({'success': False, 'error': 'Token no encontrado'}), 404
+        
             token_creator = token_row[1]
             
             # Verificar permisos: solo el creador o un admin puede eliminar
