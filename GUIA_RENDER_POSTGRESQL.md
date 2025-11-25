@@ -54,7 +54,16 @@ DATABASE_URL=postgresql://usuario:password@host:5432/database
 
 **Ejemplo real:**
 ```
-DATABASE_URL=postgresql://aspers_ss_db_user:abc123xyz789@dpg-xxxxx-a.oregon-postgres.render.com:5432/aspers_ss_db
+DATABASE_URL=postgresql://aspers_ss_db_user:Dc2Exm9t8oXaBqVZrwcdCV9Ml9tcVhFK@dpg-d4iuntk9c44c73b5bhfg-a:5432/aspers_ss_db
+```
+
+**O si prefieres variables separadas:**
+```
+POSTGRES_HOST=dpg-d4iuntk9c44c73b5bhfg-a
+POSTGRES_PORT=5432
+POSTGRES_USER=aspers_ss_db_user
+POSTGRES_PASSWORD=Dc2Exm9t8oXaBqVZrwcdCV9Ml9tcVhFK
+POSTGRES_DATABASE=aspers_ss_db
 ```
 
 **O si prefieres variables separadas:**
