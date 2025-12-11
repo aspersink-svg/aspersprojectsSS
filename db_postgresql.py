@@ -82,8 +82,16 @@ def execute_query(query, params=None, fetch_one=False, fetch_all=False):
 
 def init_postgresql_db():
     """Inicializa la base de datos PostgreSQL creando todas las tablas necesarias"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        if conn is None or conn.closed:
+            raise Exception("No se pudo obtener conexión a PostgreSQL")
+        cursor = conn.cursor()
+    except Exception as e:
+        print(f"❌ Error obteniendo conexión PostgreSQL: {e}")
+        raise
     
     try:
         # Tabla de tokens de escaneo
@@ -416,23 +424,32 @@ def init_postgresql_db():
         print("✅ Base de datos PostgreSQL inicializada correctamente")
         
         # Crear empresa default "arefy" si no existe
-        cursor.execute('SELECT COUNT(*) as count FROM companies WHERE name = %s', ('arefy',))
-        if cursor.fetchone()['count'] == 0:
-            cursor.execute('''
-                INSERT INTO companies (name, subscription_type, subscription_status, subscription_price, max_users, max_admins, notes)
-                VALUES (%s, 'enterprise', 'active', 13.0, 8, 3, 'Empresa default creada automáticamente')
-            ''', ('arefy',))
-            conn.commit()
-            print("✅ Empresa default 'arefy' creada")
+        try:
+            cursor.execute('SELECT COUNT(*) FROM companies WHERE name = %s', ('arefy',))
+            result = cursor.fetchone()
+            count = result[0] if isinstance(result, tuple) else result['count']
+            if count == 0:
+                cursor.execute('''
+                    INSERT INTO companies (name, subscription_type, subscription_status, subscription_price, max_users, max_admins, notes)
+                    VALUES (%s, 'enterprise', 'active', 13.0, 8, 3, 'Empresa default creada automáticamente')
+                ''', ('arefy',))
+                conn.commit()
+                print("✅ Empresa default 'arefy' creada")
+        except Exception as e:
+            print(f"⚠️ Error creando empresa default 'arefy': {e}")
+            # No es crítico, continuar
         
     except Exception as e:
-        conn.rollback()
+        if conn:
+            conn.rollback()
         print(f"❌ Error inicializando base de datos PostgreSQL: {e}")
         import traceback
         traceback.print_exc()
         raise
     finally:
-        cursor.close()
+        if cursor:
+            cursor.close()
+        # NO cerrar la conexión aquí porque es thread-local y se reutiliza
 
 # Cache en memoria (similar al sistema SQLite)
 _cache = {}
