@@ -90,43 +90,32 @@ def _get_postgresql_connection():
             database_url = os.environ.get('DATABASE_URL')
             
             if database_url:
-                # Verificar y corregir el formato de DATABASE_URL si es necesario
-                # Render puede dar URLs sin el dominio completo
-                if database_url.startswith('postgresql://') and '@' in database_url:
-                    # Parsear la URL
-                    try:
-                        from urllib.parse import urlparse
-                        parsed = urlparse(database_url)
-                        host = parsed.hostname
-                        
-                        # Si el hostname no tiene dominio, puede ser un problema
-                        # En Render, el Internal Database URL debería tener el dominio completo
-                        if host and '.' not in host and host != 'localhost':
-                            print(f"⚠️ Hostname sin dominio detectado: {host}")
-                            print(f"⚠️ Asegúrate de usar el 'Internal Database URL' completo de Render")
-                            print(f"⚠️ Debe incluir el dominio completo, ej: dpg-xxxxx-a.oregon-postgres.render.com")
-                        
-                        # Intentar conectar
-                        _local.connection = psycopg2.connect(
-                            database_url,
-                            cursor_factory=RealDictCursor,
-                            connect_timeout=10
-                        )
-                    except Exception as parse_error:
-                        print(f"⚠️ Error parseando DATABASE_URL: {parse_error}")
-                        # Intentar conectar directamente de todas formas
-                        _local.connection = psycopg2.connect(
-                            database_url,
-                            cursor_factory=RealDictCursor,
-                            connect_timeout=10
-                        )
-                else:
-                    # URL mal formada, intentar de todas formas
+                # Intentar corregir automáticamente el hostname si falta el dominio
+                corrected_url = _fix_postgresql_url(database_url)
+                
+                # Intentar conectar
+                try:
                     _local.connection = psycopg2.connect(
-                        database_url,
+                        corrected_url,
                         cursor_factory=RealDictCursor,
                         connect_timeout=10
                     )
+                    print(f"✅ Conexión PostgreSQL establecida")
+                except Exception as connect_error:
+                    # Si falla, intentar con la URL original
+                    if corrected_url != database_url:
+                        print(f"⚠️ Falló con URL corregida, intentando URL original...")
+                        try:
+                            _local.connection = psycopg2.connect(
+                                database_url,
+                                cursor_factory=RealDictCursor,
+                                connect_timeout=10
+                            )
+                            print(f"✅ Conexión PostgreSQL establecida (con URL original)")
+                        except:
+                            raise connect_error
+                    else:
+                        raise
             else:
                 # Usar variables individuales
                 POSTGRES_HOST = os.environ.get('POSTGRES_HOST')
@@ -138,6 +127,37 @@ def _get_postgresql_connection():
                 if not POSTGRES_HOST:
                     raise Exception("POSTGRES_HOST o DATABASE_URL debe estar configurado")
                 
+                # Intentar corregir el hostname si falta el dominio
+                if '.' not in POSTGRES_HOST and POSTGRES_HOST != 'localhost':
+                    # Intentar agregar el dominio común de Render
+                    possible_domains = [
+                        '.oregon-postgres.render.com',
+                        '.virginia-postgres.render.com',
+                        '.frankfurt-postgres.render.com',
+                        '.singapore-postgres.render.com'
+                    ]
+                    
+                    for domain in possible_domains:
+                        try:
+                            test_host = POSTGRES_HOST + domain
+                            print(f"🔄 Intentando con hostname corregido: {test_host}")
+                            _local.connection = psycopg2.connect(
+                                host=test_host,
+                                port=POSTGRES_PORT,
+                                user=POSTGRES_USER,
+                                password=POSTGRES_PASSWORD,
+                                database=POSTGRES_DATABASE,
+                                cursor_factory=RealDictCursor,
+                                connect_timeout=10
+                            )
+                            print(f"✅ Conexión PostgreSQL establecida con hostname corregido")
+                            return _local.connection
+                        except:
+                            continue
+                    
+                    # Si ninguna funciona, intentar con el hostname original
+                    print(f"⚠️ No se pudo corregir automáticamente el hostname")
+                
                 _local.connection = psycopg2.connect(
                     host=POSTGRES_HOST,
                     port=POSTGRES_PORT,
@@ -147,14 +167,71 @@ def _get_postgresql_connection():
                     cursor_factory=RealDictCursor,
                     connect_timeout=10
                 )
-            print(f"✅ Conexión PostgreSQL establecida")
+                print(f"✅ Conexión PostgreSQL establecida")
         except Exception as e:
-            print(f"❌ Error conectando a PostgreSQL: {e}")
-            print(f"💡 Verifica que DATABASE_URL tenga el formato correcto:")
-            print(f"   postgresql://usuario:password@host-completo:5432/database")
-            print(f"   El host debe incluir el dominio completo (ej: dpg-xxxxx-a.oregon-postgres.render.com)")
+            error_msg = str(e)
+            print(f"❌ Error conectando a PostgreSQL: {error_msg}")
+            
+            # Mensajes de ayuda específicos
+            if "could not translate host name" in error_msg or "Name or service not known" in error_msg:
+                print(f"\n🔧 SOLUCIÓN:")
+                print(f"   1. Ve a tu servicio PostgreSQL en Render")
+                print(f"   2. Ve a la pestaña 'Connections'")
+                print(f"   3. Copia el 'Internal Database URL' COMPLETO")
+                print(f"   4. Debe incluir el dominio completo, ejemplo:")
+                print(f"      postgresql://user:pass@dpg-xxxxx-a.oregon-postgres.render.com:5432/db")
+                print(f"   5. Actualiza DATABASE_URL en tu Web App con esa URL completa")
+            else:
+                print(f"💡 Verifica que DATABASE_URL tenga el formato correcto:")
+                print(f"   postgresql://usuario:password@host-completo:5432/database")
+            
             raise
     return _local.connection
+
+def _fix_postgresql_url(url):
+    """Intenta corregir automáticamente una URL de PostgreSQL si falta el dominio"""
+    if not url or not url.startswith('postgresql://'):
+        return url
+    
+    try:
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(url)
+        host = parsed.hostname
+        
+        # Si el hostname no tiene dominio y no es localhost, intentar agregar dominio
+        if host and '.' not in host and host != 'localhost':
+            # Dominios comunes de Render PostgreSQL
+            possible_domains = [
+                '.oregon-postgres.render.com',
+                '.virginia-postgres.render.com',
+                '.frankfurt-postgres.render.com',
+                '.singapore-postgres.render.com'
+            ]
+            
+            # Intentar con cada dominio posible
+            for domain in possible_domains:
+                test_host = host + domain
+                # Reconstruir la URL con el hostname corregido
+                corrected_parsed = parsed._replace(netloc=f"{parsed.username}:{parsed.password}@{test_host}:{parsed.port or 5432}")
+                corrected_url = urlunparse(corrected_parsed)
+                
+                # Probar la conexión (timeout corto para no bloquear)
+                try:
+                    test_conn = psycopg2.connect(corrected_url, connect_timeout=3)
+                    test_conn.close()
+                    print(f"✅ Hostname corregido automáticamente: {host} -> {test_host}")
+                    return corrected_url
+                except:
+                    continue
+            
+            # Si no se pudo corregir, mostrar advertencia pero devolver URL original
+            print(f"⚠️ Hostname sin dominio detectado: {host}")
+            print(f"⚠️ No se pudo corregir automáticamente. Usa el 'Internal Database URL' completo de Render")
+        
+        return url
+    except Exception as e:
+        print(f"⚠️ Error procesando URL: {e}")
+        return url
 
 def _get_mysql_connection():
     """Obtiene conexión MySQL"""

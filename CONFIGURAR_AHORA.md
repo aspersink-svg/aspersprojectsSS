@@ -31,8 +31,16 @@ DATABASE_URL
 
 **Valor:**
 ```
-postgresql://aspers_ss_db_user:Dc2Exm9t8oXaBqVZrwcdCV9Ml9tcVhFK@dpg-d4iuntk9c44c73b5bhfg-a:5432/aspers_ss_db
+postgresql://aspers_ss_db_user:Dc2Exm9t8oXaBqVZrwcdCV9Ml9tcVhFK@dpg-d4iuntk9c44c73b5bhfg-a.oregon-postgres.render.com:5432/aspers_ss_db
 ```
+
+**⚠️ IMPORTANTE**: Debes usar el **"Internal Database URL"** completo de Render, que incluye el dominio completo (`.oregon-postgres.render.com` o similar). 
+
+**Cómo obtenerlo:**
+1. Ve a tu servicio PostgreSQL en Render
+2. Haz clic en la pestaña **"Connections"**
+3. Copia el **"Internal Database URL"** (NO el External)
+4. Debe verse así: `postgresql://user:pass@host.oregon-postgres.render.com:5432/db`
 
 4. Haz clic en **"Save Changes"**
 
