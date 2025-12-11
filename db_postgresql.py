@@ -226,8 +226,11 @@ def init_postgresql_db():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_active ON companies(is_active)')
         
         # Crear empresa default "arefy" si no existe
-        cursor.execute('SELECT COUNT(*) FROM companies WHERE name = %s', ('arefy',))
-        if cursor.fetchone()[0] == 0:
+        cursor.execute('SELECT COUNT(*) as count FROM companies WHERE name = %s', ('arefy',))
+        result = cursor.fetchone()
+        # RealDictCursor devuelve un diccionario
+        count = result['count'] if result else 0
+        if count == 0:
             cursor.execute('''
                 INSERT INTO companies (name, subscription_type, subscription_status, subscription_price, max_users, max_admins, created_by, notes)
                 VALUES (%s, 'enterprise', 'active', 13.0, 8, 3, NULL, 'Empresa default creada automáticamente')
@@ -423,11 +426,12 @@ def init_postgresql_db():
         conn.commit()
         print("✅ Base de datos PostgreSQL inicializada correctamente")
         
-        # Crear empresa default "arefy" si no existe
+        # Crear empresa default "arefy" si no existe (ya se creó arriba, pero verificamos de nuevo)
         try:
-            cursor.execute('SELECT COUNT(*) FROM companies WHERE name = %s', ('arefy',))
+            cursor.execute('SELECT COUNT(*) as count FROM companies WHERE name = %s', ('arefy',))
             result = cursor.fetchone()
-            count = result[0] if isinstance(result, tuple) else result['count']
+            # RealDictCursor devuelve un diccionario
+            count = result['count'] if result else 0
             if count == 0:
                 cursor.execute('''
                     INSERT INTO companies (name, subscription_type, subscription_status, subscription_price, max_users, max_admins, notes)
@@ -442,8 +446,11 @@ def init_postgresql_db():
     except Exception as e:
         if conn:
             conn.rollback()
-        print(f"❌ Error inicializando base de datos PostgreSQL: {e}")
+        error_type = type(e).__name__
+        error_msg = str(e)
+        print(f"❌ Error inicializando base de datos PostgreSQL: {error_type}: {error_msg}")
         import traceback
+        print("📋 Traceback completo:")
         traceback.print_exc()
         raise
     finally:

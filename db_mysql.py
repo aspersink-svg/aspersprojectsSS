@@ -658,7 +658,12 @@ def init_mysql_db():
         
     except Exception as e:
         conn.rollback()
-        print(f"❌ Error inicializando base de datos MySQL: {e}")
+        error_type = type(e).__name__
+        error_msg = str(e)
+        print(f"❌ Error inicializando base de datos MySQL: {error_type}: {error_msg}")
+        import traceback
+        print("📋 Traceback completo:")
+        traceback.print_exc()
         raise
     finally:
         cursor.close()

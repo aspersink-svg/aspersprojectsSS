@@ -64,8 +64,11 @@ def init_auth_db():
             # Crear empresa default "arefy" si no existe (solo en PostgreSQL/MySQL)
             try:
                 with get_db_cursor() as cursor:
-                    cursor.execute('SELECT COUNT(*) FROM companies WHERE name = %s', ('arefy',))
-                    if cursor.fetchone()[0] == 0:
+                    cursor.execute('SELECT COUNT(*) as count FROM companies WHERE name = %s', ('arefy',))
+                    result = cursor.fetchone()
+                    # PostgreSQL (RealDictCursor) y MySQL (DictCursor) devuelven diccionarios
+                    count = result['count'] if result else 0
+                    if count == 0:
                         cursor.execute('''
                             INSERT INTO companies (name, subscription_type, subscription_status, subscription_price, max_users, max_admins, created_by, notes)
                             VALUES (%s, 'enterprise', 'active', 13.0, 8, 3, NULL, 'Empresa default creada automáticamente')
@@ -73,12 +76,19 @@ def init_auth_db():
                         print("✅ Empresa default 'arefy' creada en PostgreSQL/MySQL")
             except Exception as e:
                 print(f"⚠️ Error creando empresa default: {e}")
+                import traceback
+                traceback.print_exc()
             
             return
         except Exception as e:
-            print(f"❌ Error inicializando MySQL/PostgreSQL: {e}")
+            error_type = type(e).__name__
+            error_msg = str(e)
+            print(f"❌ Error inicializando MySQL/PostgreSQL: {error_type}: {error_msg}")
             print("❌ NO se usará SQLite como fallback para evitar pérdida de datos en deploys")
             print("❌ Verifica la configuración de DATABASE_URL")
+            import traceback
+            print("📋 Traceback completo:")
+            traceback.print_exc()
             raise  # NO hacer fallback a SQLite, lanzar el error
     
     # Fallback a SQLite SOLO si NO hay PostgreSQL/MySQL configurado
