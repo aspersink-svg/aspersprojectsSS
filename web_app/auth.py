@@ -60,14 +60,32 @@ def init_auth_db():
         try:
             init_mysql_db()
             print("✅ Base de datos MySQL/PostgreSQL inicializada para autenticación")
+            
+            # Crear empresa default "arefy" si no existe (solo en PostgreSQL/MySQL)
+            try:
+                with get_db_cursor() as cursor:
+                    cursor.execute('SELECT COUNT(*) FROM companies WHERE name = %s', ('arefy',))
+                    if cursor.fetchone()[0] == 0:
+                        cursor.execute('''
+                            INSERT INTO companies (name, subscription_type, subscription_status, subscription_price, max_users, max_admins, created_by, notes)
+                            VALUES (%s, 'enterprise', 'active', 13.0, 8, 3, NULL, 'Empresa default creada automáticamente')
+                        ''', ('arefy',))
+                        print("✅ Empresa default 'arefy' creada en PostgreSQL/MySQL")
+            except Exception as e:
+                print(f"⚠️ Error creando empresa default: {e}")
+            
             return
         except Exception as e:
-            print(f"⚠️ Error inicializando MySQL/PostgreSQL: {e}")
-            print("⚠️ Intentando fallback a SQLite...")
+            print(f"❌ Error inicializando MySQL/PostgreSQL: {e}")
+            print("❌ NO se usará SQLite como fallback para evitar pérdida de datos en deploys")
+            print("❌ Verifica la configuración de DATABASE_URL")
+            raise  # NO hacer fallback a SQLite, lanzar el error
     
-    # Fallback a SQLite
-    conn = sqlite3.connect(DATABASE)
-    cursor = conn.cursor()
+    # Fallback a SQLite SOLO si NO hay PostgreSQL/MySQL configurado
+    # (solo para desarrollo local)
+    if not USE_MYSQL and not USE_POSTGRESQL:
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
     
     # Tabla de empresas
     cursor.execute('''

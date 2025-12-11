@@ -97,17 +97,19 @@ API_SECRET_KEY = os.environ.get('API_SECRET_KEY', secrets.token_hex(32))
 def init_db():
     """Inicializa la base de datos con todas las tablas e índices optimizados"""
     if USE_MYSQL:
-        # Usar MySQL
+        # Usar MySQL/PostgreSQL
         try:
             init_mysql_db()
-            print("✅ Base de datos MySQL inicializada")
+            print("✅ Base de datos MySQL/PostgreSQL inicializada")
             return
         except Exception as e:
-            print(f"❌ Error inicializando MySQL: {e}")
-            print("⚠️ Intentando fallback a SQLite...")
-            # Continuar con SQLite como fallback
+            print(f"❌ Error inicializando MySQL/PostgreSQL: {e}")
+            print("❌ NO se usará SQLite como fallback para evitar pérdida de datos en deploys")
+            print("❌ Verifica la configuración de DATABASE_URL o MYSQL_HOST")
+            raise  # NO hacer fallback a SQLite, lanzar el error
     
-    # Fallback a SQLite
+    # Fallback a SQLite SOLO si NO hay MySQL/PostgreSQL configurado
+    # (solo para desarrollo local)
     if not USE_MYSQL:
         conn = sqlite3.connect(DATABASE)
         cursor = conn.cursor()

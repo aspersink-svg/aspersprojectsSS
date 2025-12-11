@@ -217,6 +217,15 @@ def init_postgresql_db():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_name ON companies(name)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_active ON companies(is_active)')
         
+        # Crear empresa default "arefy" si no existe
+        cursor.execute('SELECT COUNT(*) FROM companies WHERE name = %s', ('arefy',))
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO companies (name, subscription_type, subscription_status, subscription_price, max_users, max_admins, created_by, notes)
+                VALUES (%s, 'enterprise', 'active', 13.0, 8, 3, NULL, 'Empresa default creada automáticamente')
+            ''', ('arefy',))
+            print("✅ Empresa default 'arefy' creada en PostgreSQL")
+        
         # Tabla de usuarios
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
