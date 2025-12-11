@@ -200,33 +200,60 @@ def _fix_postgresql_url(url):
         
         # Si el hostname no tiene dominio y no es localhost, intentar agregar dominio
         if host and '.' not in host and host != 'localhost':
-            # Dominios comunes de Render PostgreSQL
+            # Dominios comunes de Render PostgreSQL (todos los posibles)
             possible_domains = [
                 '.oregon-postgres.render.com',
                 '.virginia-postgres.render.com',
                 '.frankfurt-postgres.render.com',
-                '.singapore-postgres.render.com'
+                '.singapore-postgres.render.com',
+                '.mumbai-postgres.render.com',
+                '.tokyo-postgres.render.com',
+                '.sydney-postgres.render.com',
+                '.ireland-postgres.render.com'
             ]
+            
+            print(f"🔄 Detectado hostname sin dominio: {host}")
+            print(f"🔄 Intentando corregir automáticamente con dominios comunes de Render...")
             
             # Intentar con cada dominio posible
             for domain in possible_domains:
                 test_host = host + domain
                 # Reconstruir la URL con el hostname corregido
-                corrected_parsed = parsed._replace(netloc=f"{parsed.username}:{parsed.password}@{test_host}:{parsed.port or 5432}")
+                netloc_parts = []
+                if parsed.username:
+                    if parsed.password:
+                        netloc_parts.append(f"{parsed.username}:{parsed.password}")
+                    else:
+                        netloc_parts.append(parsed.username)
+                netloc_parts.append(f"{test_host}:{parsed.port or 5432}")
+                corrected_netloc = "@".join(netloc_parts) if "@" not in netloc_parts[0] else netloc_parts[0] + "@" + netloc_parts[1] if len(netloc_parts) > 1 else netloc_parts[0]
+                
+                # Mejor forma de reconstruir
+                if parsed.username and parsed.password:
+                    corrected_netloc = f"{parsed.username}:{parsed.password}@{test_host}:{parsed.port or 5432}"
+                elif parsed.username:
+                    corrected_netloc = f"{parsed.username}@{test_host}:{parsed.port or 5432}"
+                else:
+                    corrected_netloc = f"{test_host}:{parsed.port or 5432}"
+                
+                corrected_parsed = parsed._replace(netloc=corrected_netloc)
                 corrected_url = urlunparse(corrected_parsed)
                 
                 # Probar la conexión (timeout corto para no bloquear)
                 try:
-                    test_conn = psycopg2.connect(corrected_url, connect_timeout=3)
+                    print(f"   Probando: {test_host}...")
+                    test_conn = psycopg2.connect(corrected_url, connect_timeout=5)
                     test_conn.close()
                     print(f"✅ Hostname corregido automáticamente: {host} -> {test_host}")
                     return corrected_url
-                except:
+                except Exception as test_error:
+                    # Silenciar errores de prueba, solo continuar
                     continue
             
             # Si no se pudo corregir, mostrar advertencia pero devolver URL original
-            print(f"⚠️ Hostname sin dominio detectado: {host}")
-            print(f"⚠️ No se pudo corregir automáticamente. Usa el 'Internal Database URL' completo de Render")
+            print(f"⚠️ No se pudo corregir automáticamente el hostname: {host}")
+            print(f"⚠️ Necesitas usar el 'Internal Database URL' completo de Render")
+            print(f"⚠️ Debe incluir el dominio completo, ejemplo: dpg-xxxxx-a.oregon-postgres.render.com")
         
         return url
     except Exception as e:
